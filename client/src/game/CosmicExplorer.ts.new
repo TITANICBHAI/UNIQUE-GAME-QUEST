@@ -1,0 +1,250 @@
+import { Plant } from './Plant';
+
+/**
+ * CosmicExplorer - A simple class that manages cosmic body exploration
+ * This allows players to enter and explore different celestial bodies
+ */
+export class CosmicExplorer {
+  private focusedObject: Plant | null = null;
+  private onEnterCallback: ((object: Plant) => void) | null = null;
+  private onExitCallback: (() => void) | null = null;
+  private scientificTheories: Map<string, string> = new Map(); // Store scientific theories for cosmic bodies
+
+  constructor() {
+    // Initialize scientific theories with key quantum physics and astrophysics concepts
+    this.initializeScientificTheories();
+  }
+  
+  /**
+   * Initialize scientific theories that can be discovered during exploration
+   */
+  private initializeScientificTheories(): void {
+    // Quantum Physics Theories
+    this.scientificTheories.set('quantum_entanglement', 'Quantum entanglement occurs when pairs of particles interact in ways such that the quantum state of each particle cannot be described independently of the others, regardless of distance separating them.');
+    this.scientificTheories.set('quantum_superposition', 'Quantum superposition is the ability of a quantum system to exist in multiple states simultaneously until measured or observed.');
+    this.scientificTheories.set('uncertainty_principle', 'The Heisenberg Uncertainty Principle states that the position and momentum of a particle cannot both be measured with arbitrarily high precision simultaneously.');
+    this.scientificTheories.set('quantum_tunneling', 'Quantum tunneling allows particles to pass through energy barriers that would be impossible in classical physics, enabling nuclear fusion in stars.');
+    this.scientificTheories.set('quantum_field_theory', 'Quantum field theory describes fundamental particles as excitations of underlying quantum fields, explaining how forces and matter interact.');
+    this.scientificTheories.set('quantum_decoherence', 'Quantum decoherence explains how quantum systems lose their coherence when interacting with their environment, appearing to behave classically.');
+    
+    // Astrophysics Theories
+    this.scientificTheories.set('dark_energy', 'Dark energy is a hypothetical form of energy that permeates all of space and tends to accelerate the expansion of the universe.');
+    this.scientificTheories.set('dark_matter', 'Dark matter is a form of matter thought to account for approximately 85% of the matter in the universe and about 27% of its total mass–energy content.');
+    this.scientificTheories.set('string_theory', 'String theory proposes that elementary particles are actually one-dimensional vibrating strings, with different vibrational modes representing different particle types.');
+    this.scientificTheories.set('cosmic_inflation', 'Cosmic inflation theory suggests the universe underwent exponential expansion shortly after the Big Bang, explaining its uniformity and flatness.');
+    this.scientificTheories.set('stellar_nucleosynthesis', 'Stellar nucleosynthesis is the process by which heavier elements are created within stars through nuclear fusion reactions.');
+    this.scientificTheories.set('gravitational_waves', 'Gravitational waves are ripples in spacetime caused by violent cosmic events, confirming a major prediction of Einstein\'s general relativity.');
+    
+    // Planetary Science Theories
+    this.scientificTheories.set('plate_tectonics', 'Plate tectonics describes how Earth\'s lithosphere is divided into plates that move over the asthenosphere, creating mountains, volcanoes, and earthquakes.');
+    this.scientificTheories.set('planetary_differentiation', 'Planetary differentiation is the process where denser materials sink to the center while lighter materials rise to the surface, creating layered structures.');
+    this.scientificTheories.set('magnetic_dynamo', 'The magnetic dynamo theory explains how rotating, convecting, and electrically conducting fluid generates a magnetic field around planets like Earth.');
+    
+    // Black Hole Phenomena
+    this.scientificTheories.set('hawking_radiation', 'Hawking radiation is the theoretical black body radiation emitted by black holes due to quantum effects near the event horizon.');
+    this.scientificTheories.set('event_horizon', 'The event horizon is the boundary around a black hole beyond which nothing, not even light, can escape its gravitational pull.');
+    this.scientificTheories.set('singularity', 'A singularity is a point at the center of a black hole where gravity is infinitely strong and spacetime curvature becomes infinite.');
+    this.scientificTheories.set('spaghettification', 'Spaghettification is the vertical stretching and horizontal compression of objects into long thin shapes in a strong gravitational field near black holes.');
+    
+    // Star Phenomena
+    this.scientificTheories.set('solar_flares', 'Solar flares are sudden flashes of increased brightness on stars, caused by magnetic energy released from the corona.');
+    this.scientificTheories.set('stellar_evolution', 'Stellar evolution describes the changes a star undergoes during its lifetime, from formation in a molecular cloud to final stages as white dwarfs, neutron stars, or black holes.');
+    this.scientificTheories.set('stellar_wind', 'Stellar wind is the continuous flow of charged particles ejected from the upper atmosphere of stars, creating spectacular aurorae when interacting with planetary magnetic fields.');
+    this.scientificTheories.set('nuclear_fusion', 'Nuclear fusion in star cores converts hydrogen into helium and heavier elements, releasing enormous energy that counters gravitational collapse.');
+    
+    // Nebula Phenomena
+    this.scientificTheories.set('supernova_remnant', 'Supernova remnants are expanding shells of gas and dust ejected at high velocity from a supernova explosion, enriching space with heavy elements.');
+    this.scientificTheories.set('planetary_nebula', 'Planetary nebulae form when dying stars shed their outer layers, creating colorful shells of ionized gas while the core becomes a white dwarf.');
+    this.scientificTheories.set('star_formation', 'Star formation occurs in molecular clouds when dense regions collapse under gravity, heating until nuclear fusion begins.');
+    
+    // Galaxy Phenomena
+    this.scientificTheories.set('galactic_halo', 'The galactic halo is a spherical component extending beyond the main visible part of galaxies, containing stars, globular clusters, and dark matter.');
+    this.scientificTheories.set('active_galactic_nucleus', 'Active galactic nuclei are compact regions at galaxy centers with much higher than normal luminosity, powered by supermassive black holes.');
+    this.scientificTheories.set('galactic_rotation', 'Galactic rotation curves reveal that stars in galaxies orbit at speeds inconsistent with visible mass, providing evidence for dark matter.');
+    this.scientificTheories.set('galactic_merger', 'Galactic mergers occur when galaxies collide and join together, triggering starbursts and reshaping the involved galaxies.');
+  }
+
+  /**
+   * Enter a cosmic body to explore its interior
+   */
+  enterCosmicBody(cosmicBody: Plant): void {
+    console.log(`Entering ${cosmicBody.type}: ${cosmicBody.id}`);
+    
+    // Set as the current focused object
+    this.focusedObject = cosmicBody;
+    
+    // Generate interior elements if they don't exist yet
+    if (!cosmicBody.interior || cosmicBody.interior.length === 0) {
+      this.generateInteriorElements(cosmicBody);
+    }
+    
+    // Mark as expanded
+    cosmicBody.isExpanded = true;
+    
+    // Fire callback if defined
+    if (this.onEnterCallback) {
+      this.onEnterCallback(cosmicBody);
+    }
+  }
+  
+  /**
+   * Exit the current cosmic body
+   */
+  exitCurrentBody(): void {
+    if (!this.focusedObject) return;
+    
+    console.log(`Exiting ${this.focusedObject.type}`);
+    
+    // Set focused object to its parent if it has one
+    const parent = this.focusedObject.parent;
+    this.focusedObject.isExpanded = false;
+    this.focusedObject = null;
+    
+    // Fire callback if defined
+    if (this.onExitCallback) {
+      this.onExitCallback();
+    }
+    
+    // If the object had a parent, enter that parent
+    if (parent) {
+      this.enterCosmicBody(parent);
+    }
+  }
+  
+  /**
+   * Get the currently focused cosmic body
+   */
+  getFocusedObject(): Plant | null {
+    return this.focusedObject;
+  }
+  
+  /**
+   * Set callbacks for enter/exit events
+   */
+  setCallbacks(
+    onEnter: (object: Plant) => void, 
+    onExit: () => void
+  ): void {
+    this.onEnterCallback = onEnter;
+    this.onExitCallback = onExit;
+  }
+  
+  /**
+   * Generate interior elements for a cosmic body
+   * This creates all the objects inside a galaxy, star, planet, etc.
+   */
+  private generateInteriorElements(cosmicBody: Plant): void {
+    // Clear any existing interior elements
+    cosmicBody.interior = [];
+    
+    switch(cosmicBody.type) {
+      case 'galaxy':
+        this.generateGalaxyInterior(cosmicBody);
+        break;
+        
+      case 'star':
+        this.generateStarInterior(cosmicBody);
+        break;
+        
+      case 'planet':
+        this.generatePlanetInterior(cosmicBody);
+        break;
+        
+      case 'blackhole':
+        this.generateBlackholeInterior(cosmicBody);
+        break;
+        
+      case 'nebula':
+        this.generateNebulaInterior(cosmicBody);
+        break;
+        
+      case 'protostar':
+        this.generateProtostarInterior(cosmicBody);
+        break;
+        
+      case 'neutron_star':
+        this.generateNeutronStarInterior(cosmicBody);
+        break;
+    }
+    
+    // Add random cosmic events and phenomena for more interactivity
+    this.addCosmicEvents(cosmicBody);
+  }
+  
+  /**
+   * Add random cosmic events and phenomena to any cosmic body
+   * This enhances interactivity and adds scientific concepts
+   */
+  private addCosmicEvents(cosmicBody: Plant): void {
+    // Probability of having cosmic events depends on body type
+    let eventProbability = 0.3; // Base probability
+    
+    switch(cosmicBody.type) {
+      case 'galaxy':
+        eventProbability = 0.7; // Galaxies have many events
+        break;
+      case 'star':
+        eventProbability = 0.5; // Stars have moderate events
+        break;
+      case 'blackhole':
+        eventProbability = 0.8; // Black holes have frequent events
+        break;
+      case 'nebula':
+        eventProbability = 0.6; // Nebulae have several events
+        break;
+    }
+    
+    // Check if we should add events
+    if (Math.random() > eventProbability) return;
+    
+    // Pick random events based on cosmic body type
+    const possibleEvents: string[] = [];
+    
+    switch(cosmicBody.type) {
+      case 'galaxy':
+        possibleEvents.push(
+          'galaxy_merger', 'starburst', 'active_galactic_nucleus', 
+          'dark_matter_halo', 'supercluster', 'void_region', 'cosmic_filament'
+        );
+        break;
+      case 'star':
+        possibleEvents.push(
+          'solar_flare', 'coronal_mass_ejection', 'stellar_wind', 
+          'stellar_nursery', 'binary_system', 'variable_star'
+        );
+        break;
+      case 'planet':
+        possibleEvents.push(
+          'meteor_shower', 'aurora', 'volcanic_activity', 
+          'plate_tectonics', 'atmospheric_storms', 'magnetic_field_reversal'
+        );
+        break;
+      case 'blackhole':
+        possibleEvents.push(
+          'event_horizon_fluctuation', 'hawking_radiation', 'gravitational_lensing', 
+          'spaghettification', 'frame_dragging', 'ergosphere'
+        );
+        break;
+      case 'nebula':
+        possibleEvents.push(
+          'stellar_formation', 'dust_pillar', 'bow_shock', 
+          'planetary_nebula_ring', 'supernova_remnant'
+        );
+        break;
+    }
+    
+    // Pick 1-2 random events
+    const eventCount = 1 + (Math.random() < 0.3 ? 1 : 0);
+    for (let i = 0; i < eventCount; i++) {
+      if (possibleEvents.length === 0) break;
+      
+      // Pick a random event
+      const eventIndex = Math.floor(Math.random() * possibleEvents.length);
+      const eventType = possibleEvents[eventIndex];
+      
+      // Create the event
+      this.createCosmicEvent(cosmicBody, eventType);
+      
+      // Remove this event from possible events to avoid duplicates
+      possibleEvents.splice(eventIndex, 1);
+    }

@@ -1,0 +1,2439 @@
+import { Particle } from './Particle';
+import { Plant, Satellite } from './Plant';
+import { Renderer } from './Renderer';
+import { InputHandler } from './InputHandler';
+import { GameState } from './GameState';
+import { AudioManager } from './AudioManager';
+import { CosmicExplorer } from './CosmicExplorer';
+import { generatePerlinNoise, distance } from './utils';
+
+interface GameCallbacks {
+  onScoreUpdate: (score: number) => void;
+  onEnergyUpdate: (energy: number) => void;
+  onPlantCountUpdate: (count: number) => void;
+  onLevelUp?: (level: number) => void;
+  onComboUpdate?: (multiplier: number) => void;
+  onAchievementUnlocked?: (achievement: any) => void;
+  onChallengeUpdated?: (challenges: any[]) => void;
+  onChallengeCompleted?: (challenge: any) => void;
+  onUniversePhaseChanged?: (phase: any) => void;
+  onCosmicElementDiscovered?: (element: any) => void;
+  onCosmicParametersUpdated?: (params: {
+    cosmicAge: number;
+    expansionRate: number;
+    matterDensity: number;
+    energyDensity: number;
+  }) => void;
+}
+
+export class QuantumGarden {
+  private canvas: HTMLCanvasElement;
+  private renderer: Renderer;
+  private inputHandler: InputHandler;
+  private gameState: GameState;
+  private audioManager: AudioManager;
+  private cosmicExplorer: CosmicExplorer;
+  
+  private particles: Particle[] = [];
+  private plants: Plant[] = [];
+  private fieldPotential: number[][] = [];
+  
+  // Advanced gameplay features
+  private gravityWells: {x: number, y: number, strength: number, radius: number, life: number, color: string}[] = [];
+  private particleStreams: {startX: number, startY: number, endX: number, endY: number, strength: number, duration: number, particleRate: number, timeToNextParticle: number, color: string}[] = [];
+  private activeFusions: {x: number, y: number, particles: Particle[], progress: number, maxProgress: number, radius: number, color: string}[] = [];
+  private cosmicEvents: {type: string, x: number, y: number, radius: number, timeLeft: number, effect: string, color: string}[] = [];
+  private activeMode: string = 'create'; // 'create', 'gravity', 'fusion', 'channel', 'explore'
+  private dragStart: {x: number, y: number} | null = null;
+  private dragEnd: {x: number, y: number} | null = null;
+  private isDragging: boolean = false;
+  private selectedParticles: Particle[] = [];
+  private modeButtonsVisible: boolean = false;
+  
+  private width = 0;
+  private height = 0;
+  private isRunning = true;
+  private lastTimestamp = 0;
+  private callbacks: GameCallbacks;
+  private animationFrameId: number | null = null;
+
+  constructor(canvas: HTMLCanvasElement, callbacks: GameCallbacks) {
+    this.canvas = canvas;
+    this.callbacks = callbacks;
+    this.width = canvas.width;
+    this.height = canvas.height;
+    
+    // Initialize subsystems
+    this.renderer = new Renderer(canvas);
+    this.inputHandler = new InputHandler(canvas);
+    this.gameState = new GameState();
+    this.audioManager = new AudioManager();
+    this.cosmicExplorer = new CosmicExplorer();
+    
+    // Set up cosmic explorer callbacks
+    this.cosmicExplorer.setCallbacks(
+      // When entering a cosmic body
+      (object) => {
+        console.log(`Entered ${object.type}`);
+        // Play a sound effect
+        this.audioManager.playSuccess();
+        // Could add UI notifications here
+      },
+      // When exiting a cosmic body
+      () => {
+        console.log("Exited cosmic body");
+        // Play a sound effect
+        this.audioManager.playHit();
+      }
+    );
+    
+    // Initialize quantum field
+    this.initField();
+    
+    // Start listeners
+    this.setupEventListeners();
+    
+    // Start game loop
+    this.lastTimestamp = performance.now();
+    this.gameLoop(this.lastTimestamp);
+  }
+  
+  // Create initial quantum field
+  private initField() {
+    // Generate perlin noise for the field
+    this.fieldPotential = generatePerlinNoise(
+      Math.ceil(this.width / 10), 
+      Math.ceil(this.height / 10),
+      0.1
+    );
+    
+    // Create initial particles
+    const particleCount = Math.min(20, Math.floor((this.width * this.height) / 30000));
+    for (let i = 0; i < particleCount; i++) {
+      this.createParticle(
+        Math.random() * this.width,
+        Math.random() * this.height,
+        Math.random() * 2 * Math.PI
+      );
+    }
+  }
+  
+  private setupEventListeners() {
+    this.inputHandler.onClick((x, y) => {
+      this.handleClick(x, y);
+    });
+    
+    this.inputHandler.onDrag((x, y) => {
+      if (this.activeMode === 'create') {
+        // Only spawn new particles occasionally during drag to prevent too many
+        if (Math.random() < 0.2) {
+          this.handleClick(x, y);
+        }
+      } else if (this.activeMode === 'channel' && this.dragStart) {
+        // When in channel mode, show a preview of the stream
+        this.dragEnd = { x, y };
+      }
+    });
+    
+    this.inputHandler.onMove((x, y) => {
+      // Movement creates subtle wave patterns in the field
+      if (this.activeMode === 'create') {
+        this.createWaveDisturbance(x, y, 20, 0.5);
+      }
+      
+      // Update hover state for buttons
+      if (this.isMouseOverModeButton(x, y)) {
+        this.canvas.style.cursor = 'pointer';
+      } else {
+        this.canvas.style.cursor = 'default';
+      }
+    });
+    
+    // Game mechanics keyboard shortcuts
+    this.inputHandler.onKeyPress('q', () => {
+      this.toggleEntanglement();
+    });
+    
+    this.inputHandler.onKeyPress('w', () => {
+      this.collapseWaveFunction();
+    });
+    
+    this.inputHandler.onKeyPress('e', () => {
+      this.increaseFieldEnergy();
+    });
+    
+    // Game control keyboard shortcuts
+    this.inputHandler.onKeyPress(' ', () => {
+      this.togglePause();
+    });
+    
+    // Mode switching keyboard shortcuts
+    this.inputHandler.onKeyPress('1', () => {
+      this.setActiveMode('create');
+    });
+    
+    this.inputHandler.onKeyPress('2', () => {
+      this.setActiveMode('gravity');
+    });
+    
+    this.inputHandler.onKeyPress('3', () => {
+      this.setActiveMode('channel');
+    });
+    
+    this.inputHandler.onKeyPress('4', () => {
+      this.setActiveMode('fusion');
+    });
+    
+    this.inputHandler.onKeyPress('5', () => {
+      this.setActiveMode('explore');
+    });
+    
+    this.inputHandler.onKeyPress('m', () => {
+      this.toggleModeButtons();
+    });
+  }
+  
+  // Check if the mouse is over a mode button
+  private isMouseOverModeButton(x: number, y: number): boolean {
+    if (!this.modeButtonsVisible) return false;
+    
+    const buttonSize = 40;
+    const spacing = 10;
+    const startY = 60;
+    const startX = 20;
+    
+    const modes = ['create', 'gravity', 'channel', 'fusion', 'explore'];
+    
+    for (let i = 0; i < modes.length; i++) {
+      const buttonY = startY + (buttonSize + spacing) * i;
+      
+      if (x >= startX && x <= startX + buttonSize && 
+          y >= buttonY && y <= buttonY + buttonSize) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+  
+  // Toggle mode buttons visibility
+  private toggleModeButtons() {
+    this.modeButtonsVisible = !this.modeButtonsVisible;
+  }
+  
+  // Set the active interaction mode
+  private setActiveMode(mode: string) {
+    // Reset any in-progress operations
+    this.dragStart = null;
+    this.dragEnd = null;
+    this.selectedParticles = [];
+    
+    // Set the new mode
+    this.activeMode = mode;
+    
+    // Play sound to confirm mode change
+    this.audioManager.playHit();
+  }
+  
+  // Main game loop
+  private gameLoop(timestamp: number) {
+    const deltaTime = (timestamp - this.lastTimestamp) / 1000;
+    this.lastTimestamp = timestamp;
+    
+    if (this.isRunning) {
+      this.update(deltaTime);
+    }
+    
+    this.render();
+    
+    this.animationFrameId = requestAnimationFrame(this.gameLoop.bind(this));
+  }
+  
+  private update(deltaTime: number) {
+    // Restore energy over time
+    this.gameState.regenerateEnergy(deltaTime);
+    
+    // Update cosmic evolution
+    if (this.gameState.updateCosmos) {
+      this.gameState.updateCosmos(deltaTime);
+      
+      // Update renderer's universe phase to match current game state
+      if (this.renderer.setUniversePhase) {
+        this.renderer.setUniversePhase(this.gameState.getCurrentPhase?.() || 0);
+      }
+      
+      // Report cosmic parameters
+      if (this.callbacks.onCosmicParametersUpdated) {
+        this.callbacks.onCosmicParametersUpdated({
+          cosmicAge: this.gameState.getCosmicAge?.() || 0,
+          expansionRate: this.gameState.getExpansionRate?.() || 1.0,
+          matterDensity: this.gameState.getMatterDensity?.() || 0,
+          energyDensity: this.gameState.getEnergyDensity?.() || 1.0
+        });
+      }
+    }
+    
+    // Update quantum field
+    this.updateField(deltaTime);
+    
+    // Update strategic mechanics
+    this.updateGravityWells(deltaTime);
+    this.updateParticleStreams(deltaTime);
+    this.updateFusionEvents(deltaTime);
+    
+    // Update all particles
+    this.updateParticles(deltaTime);
+    
+    // Update all plants (stars and galaxies in later phases)
+    this.updatePlants(deltaTime);
+    
+    // Check for growth opportunities (stars and galaxies in later phases)
+    this.checkPlantGrowth();
+    
+    // Report state to UI
+    this.callbacks.onScoreUpdate(this.gameState.getScore());
+    this.callbacks.onEnergyUpdate(this.gameState.getEnergy());
+    this.callbacks.onPlantCountUpdate(this.plants.length);
+    
+    // Report combo multiplier if supported
+    if (this.callbacks.onComboUpdate && this.gameState.getComboMultiplier) {
+      this.callbacks.onComboUpdate(this.gameState.getComboMultiplier());
+    }
+  }
+  
+  // Update gravity wells
+  private updateGravityWells(deltaTime: number) {
+    for (let i = this.gravityWells.length - 1; i >= 0; i--) {
+      const well = this.gravityWells[i];
+      
+      // Decrease lifetime
+      well.life -= deltaTime;
+      
+      // Remove expired gravity wells
+      if (well.life <= 0) {
+        this.gravityWells.splice(i, 1);
+        continue;
+      }
+      
+      // Gravity wells affect the quantum field
+      this.applyGravityWellToField(well, deltaTime);
+    }
+  }
+  
+  // Apply gravity well effects to the quantum field
+  private applyGravityWellToField(well: {x: number, y: number, strength: number, radius: number, life: number, color: string}, deltaTime: number) {
+    // Calculate field cell size
+    const cellSize = 10;
+    const fieldX = Math.floor(well.x / cellSize);
+    const fieldY = Math.floor(well.y / cellSize);
+    const fieldRadius = Math.ceil(well.radius / cellSize);
+    
+    // Apply gravitation effect to quantum field in area
+    for (let y = Math.max(0, fieldY - fieldRadius); y < Math.min(this.fieldPotential.length, fieldY + fieldRadius); y++) {
+      for (let x = Math.max(0, fieldX - fieldRadius); x < Math.min(this.fieldPotential[0].length, fieldX + fieldRadius); x++) {
+        const dx = (x - fieldX) * cellSize;
+        const dy = (y - fieldY) * cellSize;
+        const distSq = dx * dx + dy * dy;
+        
+        if (distSq < well.radius * well.radius) {
+          // Intensity decreases with distance from center
+          const distFactor = 1 - Math.sqrt(distSq) / well.radius;
+          
+          // Apply gravitational distortion to field
+          this.fieldPotential[y][x] += well.strength * distFactor * deltaTime * 0.1;
+          
+          // Cap field values
+          this.fieldPotential[y][x] = Math.max(0, Math.min(1, this.fieldPotential[y][x]));
+        }
+      }
+    }
+  }
+  
+  // Update particle streams
+  private updateParticleStreams(deltaTime: number) {
+    for (let i = this.particleStreams.length - 1; i >= 0; i--) {
+      const stream = this.particleStreams[i];
+      
+      // Decrease duration
+      stream.duration -= deltaTime;
+      
+      // Remove expired streams
+      if (stream.duration <= 0) {
+        this.particleStreams.splice(i, 1);
+        continue;
+      }
+      
+      // Update time to next particle
+      stream.timeToNextParticle -= deltaTime;
+      
+      // Spawn new particles in the stream
+      if (stream.timeToNextParticle <= 0) {
+        // Reset timer
+        stream.timeToNextParticle = 1 / stream.particleRate;
+        
+        // Create a particle at the start, heading toward the end
+        const angle = Math.atan2(
+          stream.endY - stream.startY,
+          stream.endX - stream.startX
+        );
+        
+        // Create particle with enhanced properties
+        const particle = this.createParticle(
+          stream.startX, 
+          stream.startY, 
+          angle
+        );
+        
+        // Increase particle energy and speed based on stream strength
+        particle.energy += stream.strength;
+        particle.speed *= 1.5;
+        
+        // Give particle a special color to match the stream
+        particle.wavelength = 400 + Math.random() * 200; // Variable wavelength for visual effect
+      }
+      
+      // Streams also affect the quantum field
+      this.applyStreamToField(stream, deltaTime);
+    }
+  }
+  
+  // Apply stream effects to the quantum field
+  private applyStreamToField(stream: {startX: number, startY: number, endX: number, endY: number, strength: number, duration: number, particleRate: number, timeToNextParticle: number, color: string}, deltaTime: number) {
+    const cellSize = 10;
+    const steps = 10; // How many points along the stream to affect
+    
+    for (let i = 0; i < steps; i++) {
+      const t = i / (steps - 1); // 0 to 1
+      const x = Math.floor((stream.startX + (stream.endX - stream.startX) * t) / cellSize);
+      const y = Math.floor((stream.startY + (stream.endY - stream.startY) * t) / cellSize);
+      
+      // Skip if outside field bounds
+      if (x < 0 || x >= this.fieldPotential[0].length || y < 0 || y >= this.fieldPotential.length) {
+        continue;
+      }
+      
+      // Apply energy to field along the stream path
+      this.fieldPotential[y][x] += stream.strength * 0.05 * deltaTime;
+      
+      // Cap field values
+      this.fieldPotential[y][x] = Math.max(0, Math.min(1, this.fieldPotential[y][x]));
+    }
+  }
+  
+  // Update fusion events
+  private updateFusionEvents(deltaTime: number) {
+    for (let i = this.activeFusions.length - 1; i >= 0; i--) {
+      const fusion = this.activeFusions[i];
+      
+      // Increase progress
+      fusion.progress += deltaTime;
+      
+      // Check if fusion is complete
+      if (fusion.progress >= fusion.maxProgress) {
+        // Fusion complete - create explosion
+        this.createFusionExplosion(fusion);
+        
+        // Remove fusion event
+        this.activeFusions.splice(i, 1);
+        continue;
+      }
+      
+      // Fusion affects nearby particles and the quantum field
+      this.applyFusionEffects(fusion, deltaTime);
+    }
+  }
+  
+  // Apply fusion effects to the environment
+  private applyFusionEffects(fusion: {x: number, y: number, particles: Particle[], progress: number, maxProgress: number, radius: number, color: string}, deltaTime: number) {
+    // Calculate progress percentage
+    const progressPct = fusion.progress / fusion.maxProgress;
+    
+    // Affect quantum field
+    const cellSize = 10;
+    const fieldX = Math.floor(fusion.x / cellSize);
+    const fieldY = Math.floor(fusion.y / cellSize);
+    const fieldRadius = Math.ceil(fusion.radius / cellSize);
+    
+    // Apply fusion energy to quantum field in area
+    for (let y = Math.max(0, fieldY - fieldRadius); y < Math.min(this.fieldPotential.length, fieldY + fieldRadius); y++) {
+      for (let x = Math.max(0, fieldX - fieldRadius); x < Math.min(this.fieldPotential[0].length, fieldX + fieldRadius); x++) {
+        const dx = (x - fieldX) * cellSize;
+        const dy = (y - fieldY) * cellSize;
+        const distSq = dx * dx + dy * dy;
+        
+        if (distSq < fusion.radius * fusion.radius) {
+          // Intensity increases with fusion progress
+          const distFactor = 1 - Math.sqrt(distSq) / fusion.radius;
+          
+          // Apply fusion energy to field
+          this.fieldPotential[y][x] += progressPct * distFactor * deltaTime * 0.3;
+          
+          // Cap field values
+          this.fieldPotential[y][x] = Math.max(0, Math.min(1, this.fieldPotential[y][x]));
+        }
+      }
+    }
+    
+    // Affect nearby particles
+    for (const particle of this.particles) {
+      const dist = distance(fusion.x, fusion.y, particle.x, particle.y);
+      
+      if (dist < fusion.radius * 2) {
+        // Particles are drawn toward fusion as it progresses
+        const angle = Math.atan2(fusion.y - particle.y, fusion.x - particle.x);
+        const force = 0.1 * progressPct * (1 - dist / (fusion.radius * 2));
+        
+        // Adjust particle direction
+        const turnRate = 0.05;
+        
+        // Calculate angle difference
+        let angleDiff = angle - particle.direction;
+        while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+        while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+        
+        // Turn particle toward fusion center
+        particle.direction += angleDiff * turnRate * force;
+        
+        // Increase particle energy
+        particle.energy += force * 0.1;
+      }
+    }
+  }
+  
+  // Create explosion when fusion completes
+  private createFusionExplosion(fusion: {x: number, y: number, particles: Particle[], progress: number, maxProgress: number, radius: number, color: string}) {
+    // Create wave disturbance
+    this.createWaveDisturbance(fusion.x, fusion.y, fusion.radius * 3, 2.0);
+    
+    // Create new particles in all directions
+    const particleCount = 8 + Math.floor(fusion.particles.length * 1.5);
+    const totalEnergy = fusion.particles.reduce((sum, p) => sum + p.energy, 0);
+    
+    for (let i = 0; i < particleCount; i++) {
+      const angle = (i / particleCount) * Math.PI * 2;
+      const particle = this.createParticle(fusion.x, fusion.y, angle);
+      
+      // Enhanced particles from fusion
+      particle.energy = (totalEnergy / particleCount) * 1.5;
+      particle.speed *= 1.5;
+      particle.lifespan *= 1.2;
+    }
+    
+    // Play explosion sound
+    this.audioManager.playSuccess();
+    
+    // Add score based on fusion size
+    this.gameState.addScore(50 * fusion.particles.length);
+    
+    // Chance to create a new plant from fusion
+    if (Math.random() < 0.3) {
+      this.createPlant(fusion.x, fusion.y, totalEnergy / 2);
+    }
+  }
+  
+  private render() {
+    // Clear canvas
+    this.renderer.clear();
+    
+    // Render quantum field
+    this.renderer.renderField(this.fieldPotential);
+    
+    // Render gravity wells
+    this.renderGravityWells();
+    
+    // Render particle streams
+    this.renderParticleStreams();
+    
+    // Render fusion events
+    this.renderFusionEvents();
+    
+    // Render all plants
+    for (const plant of this.plants) {
+      this.renderer.renderPlant(plant);
+    }
+    
+    // Render all particles
+    for (const particle of this.particles) {
+      this.renderer.renderParticle(particle);
+    }
+    
+    // Render mode buttons if visible
+    if (this.modeButtonsVisible) {
+      this.renderModeButtons();
+    }
+    
+    // Render currently active mode indicator
+    this.renderActiveModeIndicator();
+  }
+  
+  // Create a gravity well at the specified location
+  private createGravityWell(x: number, y: number) {
+    // Create a new gravity well
+    const currentPhase = this.gameState.getCurrentPhase?.() || 0;
+    
+    // Determine gravity well strength based on universe phase
+    let strength = 20;
+    let radius = 80;
+    let life = 12;
+    
+    // Later universe phases have stronger gravity
+    if (currentPhase >= 5) strength += 10;
+    if (currentPhase >= 8) strength += 15;
+    
+    // Add some randomness to the parameters
+    strength *= (0.8 + Math.random() * 0.4); // 80-120% of base strength
+    radius *= (0.8 + Math.random() * 0.4); // 80-120% of base radius
+    
+    // Different colors based on universe phase
+    let color = '#2196F3'; // Default blue
+    
+    if (currentPhase >= 8) {
+      color = '#9C27B0'; // Purple for advanced phases
+    } else if (currentPhase >= 4) {
+      color = '#3F51B5'; // Deep blue for middle phases
+    }
+    
+    // Add the gravity well to the list
+    this.gravityWells.push({
+      x, y, strength, radius, life, color
+    });
+    
+    // Play sound
+    this.audioManager.playSuccess();
+    
+    // Create a wave disturbance
+    this.createWaveDisturbance(x, y, radius * 0.5, 1.0);
+  }
+  
+  // Find the nearest particle to a position
+  private findNearestParticle(x: number, y: number, maxDistance: number): Particle | null {
+    let nearest: Particle | null = null;
+    let minDist = maxDistance;
+    
+    for (const particle of this.particles) {
+      const dist = distance(x, y, particle.x, particle.y);
+      if (dist < minDist) {
+        minDist = dist;
+        nearest = particle;
+      }
+    }
+    
+    return nearest;
+  }
+  
+  // Create a particle stream between two points
+  private createParticleStream(startX: number, startY: number, endX: number, endY: number) {
+    // Calculate duration based on length
+    const length = Math.sqrt(
+      Math.pow(endX - startX, 2) + 
+      Math.pow(endY - startY, 2)
+    );
+    
+    // Longer streams last longer
+    const duration = 5 + length / 50;
+    
+    // Strength based on current phase
+    const currentPhase = this.gameState.getCurrentPhase?.() || 0;
+    let strength = 5 + currentPhase * 0.5;
+    
+    // Particle rate (particles per second)
+    const particleRate = 2 + Math.floor(currentPhase / 3);
+    
+    // Color based on phase
+    let color = '#9C27B0'; // Purple default
+    
+    if (currentPhase >= 8) {
+      color = '#FF9800'; // Orange for advanced phases
+    } else if (currentPhase >= 4) {
+      color = '#E91E63'; // Pink for middle phases
+    }
+    
+    // Add the stream
+    this.particleStreams.push({
+      startX, startY, endX, endY, 
+      strength, duration, 
+      particleRate,
+      timeToNextParticle: 1 / particleRate,
+      color
+    });
+    
+    // Play sound
+    this.audioManager.playSuccess();
+  }
+  
+  // Create a fusion event with selected particles
+  private createFusionEvent(particles: Particle[]) {
+    if (particles.length < 2) return;
+    
+    // Calculate center position of all particles
+    let centerX = 0;
+    let centerY = 0;
+    
+    for (const p of particles) {
+      centerX += p.x;
+      centerY += p.y;
+    }
+    
+    centerX /= particles.length;
+    centerY /= particles.length;
+    
+    // Determine fusion properties based on particles
+    let totalEnergy = 0;
+    for (const p of particles) {
+      totalEnergy += p.energy;
+    }
+    
+    // More particles = longer fusion time
+    const maxProgress = 5 + particles.length * 2;
+    const radius = 30 + particles.length * 5;
+    
+    // Color varies based on energy
+    const colorHue = Math.min(300, 200 + totalEnergy * 10);
+    const color = `hsl(${colorHue}, 80%, 50%)`;
+    
+    // Add the fusion event
+    this.activeFusions.push({
+      x: centerX,
+      y: centerY,
+      particles: [...particles], // Copy the array
+      progress: 0,
+      maxProgress,
+      radius,
+      color
+    });
+    
+    // Play sound
+    this.audioManager.playSuccess();
+    
+    // Create wave disturbance
+    this.createWaveDisturbance(centerX, centerY, radius, 2.0);
+  }
+  
+  // Render gravity wells with visual effects
+  private renderGravityWells() {
+    const ctx = this.renderer.getContext();
+    if (!ctx) return;
+    
+    for (const well of this.gravityWells) {
+      // Create gradient for well
+      const gradient = ctx.createRadialGradient(
+        well.x, well.y, 0,
+        well.x, well.y, well.radius
+      );
+      
+      // Add color stops
+      gradient.addColorStop(0, `${well.color}`);
+      gradient.addColorStop(0.7, `${well.color}80`); // 50% opacity
+      gradient.addColorStop(1, `${well.color}00`); // 0% opacity
+      
+      // Draw gravity well
+      ctx.beginPath();
+      ctx.fillStyle = gradient;
+      ctx.arc(well.x, well.y, well.radius, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Draw ripple effect
+      const rippleSize = well.radius * (1 + 0.2 * Math.sin(Date.now() / 500));
+      ctx.beginPath();
+      ctx.strokeStyle = `${well.color}60`; // 40% opacity
+      ctx.lineWidth = 2;
+      ctx.arc(well.x, well.y, rippleSize, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+  
+  // Render particle streams with visual effects
+  private renderParticleStreams() {
+    const ctx = this.renderer.getContext();
+    if (!ctx) return;
+    
+    for (const stream of this.particleStreams) {
+      // Draw line for stream path
+      ctx.beginPath();
+      ctx.strokeStyle = `${stream.color}80`; // 50% opacity
+      ctx.lineWidth = 4;
+      ctx.moveTo(stream.startX, stream.startY);
+      ctx.lineTo(stream.endX, stream.endY);
+      ctx.stroke();
+      
+      // Draw glow effect
+      ctx.beginPath();
+      ctx.strokeStyle = `${stream.color}40`; // 25% opacity
+      ctx.lineWidth = 8;
+      ctx.moveTo(stream.startX, stream.startY);
+      ctx.lineTo(stream.endX, stream.endY);
+      ctx.stroke();
+      
+      // Draw particles flowing along the stream
+      const particleCount = 5;
+      const streamLength = Math.sqrt(
+        Math.pow(stream.endX - stream.startX, 2) + 
+        Math.pow(stream.endY - stream.startY, 2)
+      );
+      
+      for (let i = 0; i < particleCount; i++) {
+        const progress = ((Date.now() / 300) + i * 0.2) % 1;
+        const x = stream.startX + (stream.endX - stream.startX) * progress;
+        const y = stream.startY + (stream.endY - stream.startY) * progress;
+        
+        ctx.beginPath();
+        ctx.fillStyle = stream.color;
+        ctx.arc(x, y, 3, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Add trail effect
+        ctx.beginPath();
+        ctx.fillStyle = `${stream.color}60`; // 40% opacity
+        ctx.arc(
+          x - (stream.endX - stream.startX) * 0.05, 
+          y - (stream.endY - stream.startY) * 0.05, 
+          2, 0, Math.PI * 2
+        );
+        ctx.fill();
+      }
+    }
+  }
+  
+  // Render fusion events with visual effects
+  private renderFusionEvents() {
+    const ctx = this.renderer.getContext();
+    if (!ctx) return;
+    
+    for (const fusion of this.activeFusions) {
+      // Calculate progress percentage
+      const progress = fusion.progress / fusion.maxProgress;
+      
+      // Create pulsing effect based on progress
+      const pulseSize = fusion.radius * (0.8 + 0.4 * Math.sin(Date.now() / 200));
+      
+      // Draw main fusion circle
+      ctx.beginPath();
+      const gradient = ctx.createRadialGradient(
+        fusion.x, fusion.y, 0,
+        fusion.x, fusion.y, pulseSize
+      );
+      
+      // Gradient colors change as fusion progresses
+      gradient.addColorStop(0, `hsl(${280 + progress * 60}, 100%, 70%)`);
+      gradient.addColorStop(0.6, `hsl(${280 + progress * 60}, 80%, 50%)80`);
+      gradient.addColorStop(1, `hsl(${280 + progress * 60}, 80%, 50%)00`);
+      
+      ctx.fillStyle = gradient;
+      ctx.arc(fusion.x, fusion.y, pulseSize, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Draw energy rays radiating outward
+      const rayCount = 8;
+      for (let i = 0; i < rayCount; i++) {
+        const angle = (i / rayCount) * Math.PI * 2 + Date.now() / 1000;
+        const rayLength = pulseSize * (0.5 + 0.5 * progress);
+        
+        ctx.beginPath();
+        ctx.strokeStyle = `hsl(${280 + progress * 60}, 90%, 60%)`;
+        ctx.lineWidth = 2;
+        ctx.moveTo(fusion.x, fusion.y);
+        ctx.lineTo(
+          fusion.x + Math.cos(angle) * rayLength,
+          fusion.y + Math.sin(angle) * rayLength
+        );
+        ctx.stroke();
+      }
+      
+      // Draw progress ring
+      ctx.beginPath();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+      ctx.lineWidth = 2;
+      ctx.arc(fusion.x, fusion.y, pulseSize + 5, 0, Math.PI * 2 * progress);
+      ctx.stroke();
+    }
+  }
+  
+  // Render mode selection buttons
+  private renderModeButtons() {
+    const ctx = this.renderer.getContext();
+    if (!ctx) return;
+    
+    const buttonSize = 40;
+    const spacing = 10;
+    const startY = 60;
+    const startX = 20;
+    
+    const modes = [
+      { mode: 'create', label: 'Create', color: '#4CAF50', icon: '✚' },
+      { mode: 'gravity', label: 'Gravity', color: '#2196F3', icon: '◉' },
+      { mode: 'channel', label: 'Stream', color: '#9C27B0', icon: '⇢' },
+      { mode: 'fusion', label: 'Fusion', color: '#FF9800', icon: '⚛' },
+      { mode: 'explore', label: 'Explore', color: '#009688', icon: '🔍' }
+    ];
+    
+    modes.forEach((modeInfo, index) => {
+      const y = startY + (buttonSize + spacing) * index;
+      
+      // Draw button background
+      ctx.beginPath();
+      ctx.fillStyle = modeInfo.mode === this.activeMode 
+        ? `${modeInfo.color}` 
+        : `${modeInfo.color}80`;
+      ctx.roundRect(startX, y, buttonSize, buttonSize, 8);
+      ctx.fill();
+      
+      // Draw button border
+      ctx.beginPath();
+      ctx.strokeStyle = modeInfo.mode === this.activeMode 
+        ? 'white' 
+        : `${modeInfo.color}`;
+      ctx.lineWidth = 2;
+      ctx.roundRect(startX, y, buttonSize, buttonSize, 8);
+      ctx.stroke();
+      
+      // Draw icon
+      ctx.fillStyle = 'white';
+      ctx.font = '20px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(modeInfo.icon, startX + buttonSize / 2, y + buttonSize / 2);
+      
+      // Draw label
+      ctx.fillStyle = 'white';
+      ctx.font = '12px Arial';
+      ctx.textAlign = 'left';
+      ctx.fillText(modeInfo.label, startX + buttonSize + spacing, y + buttonSize / 2);
+    });
+  }
+  
+  // Render indicator for active mode
+  private renderActiveModeIndicator() {
+    const ctx = this.renderer.getContext();
+    if (!ctx) return;
+    
+    // Draw active mode indicator at the top of the screen
+    let modeName = 'Create Particles';
+    let modeColor = '#4CAF50';
+    
+    switch (this.activeMode) {
+      case 'gravity':
+        modeName = 'Gravity Wells';
+        modeColor = '#2196F3';
+        break;
+      case 'channel':
+        modeName = 'Particle Streams';
+        modeColor = '#9C27B0';
+        break;
+      case 'fusion':
+        modeName = 'Fusion Reactor';
+        modeColor = '#FF9800';
+        break;
+      case 'explore':
+        modeName = 'Cosmic Explorer';
+        modeColor = '#009688';
+        break;
+    }
+    
+    // Draw indicator background
+    ctx.beginPath();
+    ctx.fillStyle = `${modeColor}80`;
+    ctx.roundRect(this.width / 2 - 100, 10, 200, 30, 15);
+    ctx.fill();
+    
+    // Draw border
+    ctx.beginPath();
+    ctx.strokeStyle = modeColor;
+    ctx.lineWidth = 2;
+    ctx.roundRect(this.width / 2 - 100, 10, 200, 30, 15);
+    ctx.stroke();
+    
+    // Draw text
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 14px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(modeName, this.width / 2, 25);
+  }
+  
+  private updateField(deltaTime: number) {
+    // Diffusion - smooth out the field
+    const diffusionRate = 0.01;
+    const newField = this.fieldPotential.map((row, i) => 
+      row.map((cell, j) => {
+        let sum = 0;
+        let count = 0;
+        
+        // Check surrounding cells
+        for (let di = -1; di <= 1; di++) {
+          for (let dj = -1; dj <= 1; dj++) {
+            const ni = i + di;
+            const nj = j + dj;
+            
+            if (ni >= 0 && ni < this.fieldPotential.length && 
+                nj >= 0 && nj < this.fieldPotential[0].length) {
+              sum += this.fieldPotential[ni][nj];
+              count++;
+            }
+          }
+        }
+        
+        const avg = sum / count;
+        return cell * (1 - diffusionRate) + avg * diffusionRate;
+      })
+    );
+    
+    this.fieldPotential = newField;
+  }
+  
+  private updateParticles(deltaTime: number) {
+    for (let i = this.particles.length - 1; i >= 0; i--) {
+      const particle = this.particles[i];
+      
+      // Update particle movement
+      particle.update(deltaTime, this.fieldPotential);
+      
+      // Remove dead particles
+      if (particle.isDead()) {
+        this.particles.splice(i, 1);
+        continue;
+      }
+      
+      // Check boundaries
+      if (particle.x < 0 || particle.x >= this.width || 
+          particle.y < 0 || particle.y >= this.height) {
+        // Bounce off edges or wrap around
+        if (Math.random() < 0.5) {
+          // Bounce
+          if (particle.x < 0 || particle.x >= this.width) {
+            particle.direction = Math.PI - particle.direction;
+          } else {
+            particle.direction = -particle.direction;
+          }
+          
+          // Keep in bounds
+          particle.x = Math.max(0, Math.min(this.width - 1, particle.x));
+          particle.y = Math.max(0, Math.min(this.height - 1, particle.y));
+        } else {
+          // Wrap around
+          particle.x = (particle.x + this.width) % this.width;
+          particle.y = (particle.y + this.height) % this.height;
+        }
+      }
+    }
+  }
+  
+  private updatePlants(deltaTime: number) {
+    for (let i = 0; i < this.plants.length; i++) {
+      const plant = this.plants[i];
+      plant.update(deltaTime, this.fieldPotential);
+      
+      // Plants affect the quantum field
+      const fieldX = Math.floor(plant.x / 10);
+      const fieldY = Math.floor(plant.y / 10);
+      
+      if (fieldX >= 0 && fieldX < this.fieldPotential.length &&
+          fieldY >= 0 && fieldY < this.fieldPotential[0].length) {
+        // Plants enhance the field strength
+        this.fieldPotential[fieldX][fieldY] += plant.getFieldStrength() * deltaTime;
+      }
+    }
+  }
+  
+  private checkPlantGrowth() {
+    // Check if plants can grow based on particle proximity
+    for (const particle of this.particles) {
+      // See if there are already plants nearby
+      let nearbyPlant = false;
+      for (const plant of this.plants) {
+        if (distance(particle.x, particle.y, plant.x, plant.y) < 30) {
+          nearbyPlant = true;
+          break;
+        }
+      }
+      
+      // If no nearby plants, chance to create new plant
+      if (!nearbyPlant && Math.random() < 0.001) {
+        this.createPlant(particle.x, particle.y, particle.energy);
+        // Remove the particle that became a plant
+        this.particles = this.particles.filter(p => p !== particle);
+        
+        // Play growth sound
+        this.audioManager.playSuccess();
+        
+        // Increase score
+        this.gameState.addScore(100);
+      }
+    }
+  }
+  
+  // Create a new particle
+  private createParticle(x: number, y: number, direction: number = Math.random() * Math.PI * 2): Particle {
+    // Create particle with phase-appropriate properties
+    const currentPhase = this.gameState.getCurrentPhase?.() || 0;
+    
+    // Higher energy particles in later cosmic phases
+    let energy = 0.5 + Math.random() * 0.5;
+    let lifespan = 10 + Math.random() * 20;
+    
+    // Adjust particle properties based on universe phase
+    if (currentPhase >= 2) { // After Big Bang
+      energy *= 1.5; // More energetic particles
+      lifespan *= 1.2; // Longer-lasting
+    }
+    if (currentPhase >= 4) { // Particle formation phase
+      energy *= 1.2; // Even more energy
+    }
+    
+    const particle = new Particle(x, y, direction, energy, lifespan);
+    this.particles.push(particle);
+    
+    // Add some randomness to the field where particle appears
+    // Stronger disturbances in early universe phases
+    const disturbanceIntensity = currentPhase <= 3 ? 0.5 : 0.2;
+    this.createWaveDisturbance(x, y, 5, disturbanceIntensity);
+    
+    return particle;
+  }
+  
+  // Create a new cosmic body (plant, star, galaxy, planet, etc.) with scientific accuracy
+  private createPlant(x: number, y: number, energy: number): Plant {
+    // Get current universe phase to determine what type of cosmic body to create
+    const currentPhase = this.gameState.getCurrentPhase?.() || 0;
+    
+    // Create appropriate cosmic body based on universe phase
+    const plant = new Plant(x, y, energy, currentPhase);
+    
+    // Make cosmic bodies interactable in later phases
+    if (currentPhase >= 6) {
+      plant.isInteractable = true;
+      
+      // Initialize scientific properties based on type
+      if (plant.type === 'star') {
+        // Star properties based on scientific stellar classification
+        const stellarMass = 0.1 + Math.random() * 50; // 0.1 to 50 solar masses
+        
+        // Determine star type based on mass
+        let starType: 'main_sequence' | 'red_giant' | 'white_dwarf' | 'neutron' | 'yellow_dwarf' | 'red_dwarf' | 'blue_giant';
+        if (stellarMass > 15) {
+          starType = 'blue_giant';
+        } else if (stellarMass > 8) {
+          starType = Math.random() < 0.05 ? 'neutron' : 'blue_giant';
+        } else if (stellarMass > 1.5) {
+          starType = 'main_sequence';
+        } else if (stellarMass > 0.5) {
+          starType = 'yellow_dwarf';
+        } else {
+          starType = 'red_dwarf';
+        }
+        
+        // Calculate temperature based on star type
+        let temperature = 0;
+        switch (starType) {
+          case 'blue_giant': temperature = 20000 + Math.random() * 10000; break;
+          case 'main_sequence': temperature = 6000 + Math.random() * 6000; break;
+          case 'yellow_dwarf': temperature = 5000 + Math.random() * 1000; break;
+          case 'red_dwarf': temperature = 2500 + Math.random() * 1500; break;
+          case 'red_giant': temperature = 3500 + Math.random() * 1000; break;
+          case 'white_dwarf': temperature = 8000 + Math.random() * 12000; break;
+          case 'neutron': temperature = 600000 + Math.random() * 400000; break;
+        }
+        
+        // Set star properties
+        plant.cosmicProperties = {
+          starType,
+          stellarMass,
+          temperature,
+          luminosity: Math.pow(stellarMass, 3.5), // Approximate luminosity-mass relation
+        };
+      } 
+      else if (plant.type === 'planet') {
+        // Realistic planetary properties
+        const planetType = Math.random() < 0.7 ? 'rocky' : 
+                          Math.random() < 0.5 ? 'gas_giant' : 'ice_giant';
+        
+        // Set mass based on planet type
+        const mass = planetType === 'gas_giant' ? 100 + Math.random() * 900 : // 100-1000 Earth masses
+                    planetType === 'ice_giant' ? 10 + Math.random() * 90 : // 10-100 Earth masses
+                    0.1 + Math.random() * 9.9; // 0.1-10 Earth masses (rocky)
+        
+        // Calculate other properties
+        const atmosphere = planetType === 'gas_giant' || planetType === 'ice_giant' ? 0.8 + Math.random() * 0.2 :
+                          Math.random() * 0.7; // Rocky planets vary
+        
+        const magneticField = planetType === 'gas_giant' ? 0.7 + Math.random() * 0.3 :
+                             planetType === 'ice_giant' ? 0.5 + Math.random() * 0.5 :
+                             Math.random() * 0.8; // Rocky planets vary
+        
+        // Calculate habitability for rocky planets
+        if (planetType === 'rocky' && 
+            mass > 0.5 && mass < 5 && // Earth-like mass
+            atmosphere > 0.2 && atmosphere < 0.8 && // Decent atmosphere
+            magneticField > 0.3 && // Some magnetic protection
+            currentPhase >= 9) { // Earth Emerges phase or later
+          
+          plant.habitability = 0.1 + Math.random() * 0.3; // Initial habitability
+        }
+        
+        // Set planet properties
+        plant.cosmicProperties = {
+          planetType,
+          mass,
+          atmosphere,
+          hydrosphere: plant.habitability > 0 ? 0.3 + Math.random() * 0.6 : Math.random() * 0.3,
+          magneticField,
+          dayLength: 4 + Math.random() * 44, // 4-48 hour days
+          yearLength: 50 + Math.random() * 950, // 50-1000 day years
+          moons: Math.floor(planetType === 'gas_giant' ? Math.random() * 40 : 
+                           planetType === 'ice_giant' ? Math.random() * 15 : 
+                           Math.random() * 3)
+        };
+      }
+      else if (plant.type === 'galaxy') {
+        // Galaxy properties with scientific accuracy
+        const galaxyTypes: Array<'spiral' | 'elliptical' | 'irregular' | 'lenticular'> = ['spiral', 'elliptical', 'irregular', 'lenticular'];
+        const galaxyWeights = [0.6, 0.3, 0.05, 0.05]; // Distribution in the universe
+        
+        // Select galaxy type using weighted probability
+        let galaxyTypeIndex = 0;
+        const rand = Math.random();
+        let cumulativeWeight = 0;
+        
+        for (let i = 0; i < galaxyWeights.length; i++) {
+          cumulativeWeight += galaxyWeights[i];
+          if (rand <= cumulativeWeight) {
+            galaxyTypeIndex = i;
+            break;
+          }
+        }
+        
+        const galaxyType = galaxyTypes[galaxyTypeIndex];
+        const starDensity = 0.4 + Math.random() * 0.6;
+        const darkMatterRatio = 0.7 + Math.random() * 0.25; // 70-95% dark matter
+        
+        plant.cosmicProperties = {
+          galaxyType,
+          starDensity,
+          darkMatterRatio,
+          spiralArms: galaxyType === 'spiral' ? Math.floor(2 + Math.random() * 6) : undefined
+        };
+      }
+    }
+    
+    this.plants.push(plant);
+    
+    // Track growth in game state
+    this.gameState.registerPlantGrowth();
+    
+    return plant;
+    
+    // Create appropriate disturbance in the field based on cosmic body type
+    let disturbanceSize = 30;
+    let disturbanceIntensity = 1.0;
+    
+    // Different cosmic bodies create different field effects
+    if (plant.type === 'star') {
+      disturbanceSize = 40;
+      disturbanceIntensity = 1.5;
+    } else if (plant.type === 'galaxy') {
+      disturbanceSize = 60;
+      disturbanceIntensity = 2.0;
+    } else if (plant.type === 'planet') {
+      disturbanceSize = 25;
+      disturbanceIntensity = 0.8;
+    }
+    
+    this.createWaveDisturbance(x, y, disturbanceSize, disturbanceIntensity);
+    
+    // Display a visual notification appropriate to the cosmic type
+    const canvas = this.canvas;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      // Choose appropriate message and styling based on cosmic type
+      let message = "Energy Cluster Formed!";
+      let textColor = 'rgba(100, 255, 100, 0.9)';
+      let glowColor = 'rgba(0, 255, 0, 0.8)';
+      
+      switch(plant.type) {
+        case 'protostar':
+          message = "Protostar Forming!";
+          textColor = 'rgba(255, 180, 100, 0.9)';
+          glowColor = 'rgba(255, 150, 0, 0.8)';
+          break;
+        case 'star':
+          message = "Star Born!";
+          textColor = 'rgba(255, 255, 100, 0.9)';
+          glowColor = 'rgba(255, 200, 0, 0.8)';
+          break;
+        case 'galaxy':
+          message = "Galaxy Formed!";
+          textColor = 'rgba(150, 180, 255, 0.9)';
+          glowColor = 'rgba(100, 150, 255, 0.8)';
+          break;
+        case 'planet':
+          message = "Planet Coalesced!";
+          textColor = 'rgba(100, 200, 255, 0.9)';
+          glowColor = 'rgba(80, 150, 255, 0.8)';
+          break;
+        case 'lifeForm':
+          message = "Life Emerges!";
+          textColor = 'rgba(100, 255, 150, 0.9)';
+          glowColor = 'rgba(50, 255, 100, 0.8)';
+          break;
+      }
+      
+      ctx.save();
+      ctx.font = "bold 20px sans-serif";
+      
+      // Create glowing text
+      ctx.fillStyle = textColor;
+      ctx.shadowColor = glowColor;
+      ctx.shadowBlur = 15;
+      ctx.textAlign = 'center';
+      
+      // Position the message above the cosmic body
+      ctx.fillText(message, x, y - 40);
+      
+      // Add extra details for advanced cosmic bodies
+      if (plant.type === 'planet' && plant.habitability > 0.7) {
+        ctx.font = "italic 16px sans-serif";
+        ctx.fillStyle = 'rgba(100, 255, 200, 0.9)';
+        ctx.fillText("Habitable World!", x, y - 20);
+      } else if (plant.type === 'star' && plant.satellites.length > 0) {
+        ctx.font = "italic 16px sans-serif";
+        ctx.fillStyle = 'rgba(200, 255, 200, 0.9)';
+        ctx.fillText(`With ${plant.satellites.length} planets`, x, y - 20);
+      }
+      
+      ctx.restore();
+      
+      // Fade out the message after a delay
+      setTimeout(() => this.render(), 2000);
+    }
+  }
+  
+  // Create a wave disturbance in the quantum field
+  private createWaveDisturbance(x: number, y: number, radius: number, intensity: number) {
+    const fieldX = Math.floor(x / 10);
+    const fieldY = Math.floor(y / 10);
+    const fieldRadius = Math.ceil(radius / 10);
+    
+    for (let i = Math.max(0, fieldX - fieldRadius); i < Math.min(this.fieldPotential.length, fieldX + fieldRadius); i++) {
+      for (let j = Math.max(0, fieldY - fieldRadius); j < Math.min(this.fieldPotential[0].length, fieldY + fieldRadius); j++) {
+        const dist = Math.sqrt((i - fieldX) ** 2 + (j - fieldY) ** 2);
+        if (dist <= fieldRadius) {
+          const factor = 1 - (dist / fieldRadius);
+          // Create a wave-like pattern
+          this.fieldPotential[i][j] += Math.sin(dist * 2) * intensity * factor;
+        }
+      }
+    }
+  }
+  
+  // Handle mouse clicks with scientific accuracy based on universe phase
+  private handleClick(x: number, y: number) {
+    if (!this.isRunning) return;
+    
+    // Check if we're clicking on mode buttons
+    if (this.modeButtonsVisible) {
+      const buttonSize = 40;
+      const spacing = 10;
+      const startY = 60;
+      const startX = 20;
+      
+      const modes = ['create', 'gravity', 'channel', 'fusion', 'explore'];
+      
+      for (let i = 0; i < modes.length; i++) {
+        const buttonY = startY + (buttonSize + spacing) * i;
+        
+        if (x >= startX && x <= startX + buttonSize && 
+            y >= buttonY && y <= buttonY + buttonSize) {
+          this.setActiveMode(modes[i]);
+          return;
+        }
+      }
+    }
+    
+    // Check if we're currently exploring a cosmic body
+    const focusedObject = this.cosmicExplorer.getFocusedObject();
+    if (focusedObject) {
+      // Check if exit button was clicked (top-right corner)
+      if (x >= this.width - 80 && x <= this.width - 10 && y >= 10 && y <= 40) {
+        // Exit current cosmic body
+        this.cosmicExplorer.exitCurrentBody();
+        return;
+      }
+      
+      // Check if we're clicking on an object inside the current cosmic body
+      if (focusedObject.interior && focusedObject.interior.length > 0) {
+        for (const interiorObject of focusedObject.interior) {
+          if (distance(x, y, interiorObject.x, interiorObject.y) < interiorObject.size * 50) {
+            if (interiorObject.isInteractable) {
+              // Enter this cosmic body
+              this.cosmicExplorer.enterCosmicBody(interiorObject);
+              return;
+            } else {
+              // Just interact with it (regular plant behavior)
+              interiorObject.grow(5);
+              this.gameState.registerPlantGrowth();
+              this.audioManager.playHit();
+              return;
+            }
+          }
+        }
+      }
+      return;
+    }
+    
+    // Handle different interaction modes
+    switch (this.activeMode) {
+      case 'gravity':
+        // Create a gravity well if we have enough energy
+        if (this.gameState.useEnergy(25)) {
+          this.createGravityWell(x, y);
+          this.gameState.addScore(25);
+        }
+        break;
+        
+      case 'channel':
+        // Start or end a particle stream
+        if (this.dragStart === null) {
+          this.dragStart = { x, y };
+        } else {
+          this.dragEnd = { x, y };
+          // Create a particle stream between points
+          if (this.gameState.useEnergy(35)) {
+            this.createParticleStream(
+              this.dragStart.x, this.dragStart.y, 
+              this.dragEnd.x, this.dragEnd.y
+            );
+            this.gameState.addScore(40);
+          }
+          // Reset drag points
+          this.dragStart = null;
+          this.dragEnd = null;
+        }
+        break;
+        
+      case 'fusion':
+        // Select particles for fusion
+        const selectedParticle = this.findNearestParticle(x, y, 30);
+        if (selectedParticle) {
+          if (!this.selectedParticles.includes(selectedParticle)) {
+            this.selectedParticles.push(selectedParticle);
+            this.audioManager.playHit();
+            
+            // If we have enough particles, create fusion
+            if (this.selectedParticles.length >= 3) {
+              if (this.gameState.useEnergy(45)) {
+                this.createFusionEvent(this.selectedParticles);
+                this.gameState.addScore(75);
+              }
+              this.selectedParticles = [];
+            }
+          }
+        }
+        break;
+
+      case 'explore':
+        // Check if we're clicking on a cosmic body that we can enter
+        for (const plant of this.plants) {
+          if (distance(x, y, plant.x, plant.y) < plant.size * 50) {
+            if (plant.isInteractable) {
+              // Enter this cosmic body if it's interactable (galaxy, star, planet)
+              this.cosmicExplorer.enterCosmicBody(plant);
+              return;
+            }
+          }
+        }
+        break;
+        
+      case 'create':
+      default:
+        // Get the current universe phase to determine behavior
+        const currentPhase = this.gameState.getCurrentPhase();
+        
+        // Different interaction behavior based on universe phase - scientifically accurate
+        if (currentPhase <= 1) {
+          // Quantum Void/Foam phase - Energy injection creates quantum fluctuations
+          if (this.gameState.useEnergy(5)) {
+            // Create vacuum energy fluctuation
+            this.createWaveDisturbance(x, y, 40, 0.7);
+            this.audioManager.playHit();
+            
+            // In early phases, clicking represents creating quantum fluctuations
+            // These are probabilistic events that follow quantum field principles
+            if (Math.random() < 0.7) { // Quantum probability
+              // Create virtual particle-antiparticle pairs (scientifically accurate)
+              const angle = Math.random() * Math.PI * 2;
+              // Particle
+              const particle1 = this.createParticle(x, y, angle);
+              particle1.wavelength = 5 + Math.random() * 10;
+              particle1.phase = 0;
+              
+              // Antiparticle (opposite phase/direction)
+              const particle2 = this.createParticle(x, y, angle + Math.PI);
+              particle2.wavelength = particle1.wavelength;
+              particle2.phase = Math.PI;
+              
+              // These are entangled particles
+              particle1.entangled = true;
+              particle2.entangled = true;
+              
+              this.gameState.registerParticleCreated();
+            }
+          }
+        } else if (currentPhase === 2) {
+          // Big Bang phase - Massive energy release
+          if (this.gameState.useEnergy(8)) {
+            // Create a powerful disturbance with high energy (Big Bang)
+            this.createWaveDisturbance(x, y, 70, 1.2);
+            this.audioManager.playHit();
+            
+            // Create multiple high-energy particles expanding outward (cosmic inflation)
+            const particleCount = 4 + Math.floor(Math.random() * 4);
+            for (let i = 0; i < particleCount; i++) {
+              const angle = (i / particleCount) * Math.PI * 2;
+              const particle = this.createParticle(x, y, angle);
+              particle.energy = 15 + Math.random() * 10;
+            }
+            
+            this.gameState.registerParticleCreated();
+            this.gameState.addScore(20);
+          }
+        } else {
+          // Later universe phases - Normal particle creation
+          if (this.gameState.useEnergy(10)) {
+            this.createParticle(x, y);
+            this.gameState.registerParticleCreated();
+            this.audioManager.playHit();
+            this.gameState.addScore(10);
+          }
+        }
+        break;
+    }
+    } else if (currentPhase === 2) {
+      // Big Bang phase - Massive energy release
+      if (this.gameState.useEnergy(8)) {
+        // Create a powerful disturbance with high energy (Big Bang)
+        this.createWaveDisturbance(x, y, 70, 1.2);
+        this.audioManager.playHit();
+        
+        // Create multiple high-energy particles expanding outward (cosmic inflation)
+        const particleCount = 4 + Math.floor(Math.random() * 4);
+        for (let i = 0; i < particleCount; i++) {
+          const angle = (i / particleCount) * Math.PI * 2;
+          const particle = this.createParticle(x, y, angle);
+          particle.energy = 15 + Math.random() * 10;
+          particle.speed = 80 + Math.random() * 40;
+        }
+        
+        this.gameState.registerParticleCreated();
+      }
+    } else if (currentPhase <= 5) {
+      // Particle Formation and Nucleosynthesis phases
+      if (this.gameState.useEnergy(6)) {
+        // Create a moderate energy disturbance
+        this.createWaveDisturbance(x, y, 30, 0.6);
+        this.audioManager.playHit();
+        
+        // Create particles with properties that match this phase of universe evolution
+        const particle = this.createParticle(x, y);
+        
+        // Particle properties vary by phase - scientifically accurate
+        if (currentPhase === 3) { // Inflation Era
+          particle.speed = 120 + Math.random() * 80; // Very fast expansion
+          particle.wavelength = 2 + Math.random() * 3; // Short wavelength
+        } else if (currentPhase === 4) { // Particle Formation
+          particle.speed = 70 + Math.random() * 40;
+          particle.wavelength = 4 + Math.random() * 6;
+          
+          // 30% chance to create an entangled pair for quantum effects
+          if (Math.random() < 0.3) {
+            const entangledParticle = this.createParticle(
+              x + (Math.random() * 20 - 10),
+              y + (Math.random() * 20 - 10),
+              particle.direction + Math.PI + (Math.random() * 0.4 - 0.2)
+            );
+            entangledParticle.wavelength = particle.wavelength;
+            entangledParticle.phase = (particle.phase + Math.PI) % (2 * Math.PI);
+            entangledParticle.entangled = true;
+            particle.entangled = true;
+          }
+        } else if (currentPhase === 5) { // Nucleosynthesis
+          particle.speed = 50 + Math.random() * 30;
+          particle.wavelength = 8 + Math.random() * 8;
+          
+          // Higher energy for fusion processes
+          particle.energy = 15 + Math.random() * 15;
+        }
+        
+        this.gameState.registerParticleCreated();
+      }
+    } else {
+      // Cosmic Structure and later phases - objects interact differently
+      // Check if we're clicking on an existing cosmic object (star, planet, etc)
+      let clickedOnObject = false;
+      
+      for (const plant of this.plants) {
+        const distanceToObject = distance(x, y, plant.x, plant.y);
+        
+        if (distanceToObject < plant.size * 1.5) {
+          clickedOnObject = true;
+          
+          // Different interaction based on object type
+          if (plant.isInteractable) {
+            // If this is already an established cosmic body, enhance it
+            if (this.gameState.useEnergy(5)) {
+              plant.energy += 10;
+              this.createWaveDisturbance(plant.x, plant.y, 30, 0.5);
+              this.audioManager.playHit();
+              
+              // For stars, add fusion energy
+              if (plant.type === 'star') {
+                // Chance to create new satellite based on star type
+                if (Math.random() < 0.2 && plant.satellites.length < 8) {
+                  const distance = plant.size * (1.5 + Math.random() * 2);
+                  const angle = Math.random() * Math.PI * 2;
+                  const size = plant.size * (0.1 + Math.random() * 0.3);
+                  plant.satellites.push(new Satellite(distance, angle, size));
+                }
+              }
+              // For planets, increase habitability
+              else if (plant.type === 'planet' && plant.habitability > 0) {
+                plant.habitability = Math.min(1.0, plant.habitability + 0.05);
+              }
+              // For galaxies, add stars
+              else if (plant.type === 'galaxy') {
+                if (Math.random() < 0.3 && plant.satellites.length < 25) {
+                  const distance = plant.size * (0.2 + Math.random() * 0.7);
+                  const angle = Math.random() * Math.PI * 2;
+                  const size = plant.size * (0.05 + Math.random() * 0.15);
+                  plant.satellites.push(new Satellite(distance, angle, size));
+                }
+              }
+            }
+          }
+          
+          break;
+        }
+      }
+      
+      // If not clicking on an existing object, create new particles or objects based on cosmic era
+      if (!clickedOnObject) {
+        if (currentPhase >= 6 && currentPhase <= 7) {
+          // Cosmic Structure and Stellar Alchemy phases
+          if (this.gameState.useEnergy(8)) {
+            // Higher chance to create a star or galaxy during these phases
+            if (Math.random() < 0.3) {
+              this.createPlant(x, y, 0.5 + Math.random() * 0.5);
+              this.createWaveDisturbance(x, y, 40, 0.8);
+              this.audioManager.playSuccess();
+            } else {
+              const particle = this.createParticle(x, y);
+              particle.speed = 30 + Math.random() * 30;
+              particle.lifespan = 10 + Math.random() * 20;
+              this.createWaveDisturbance(x, y, 25, 0.4);
+              this.audioManager.playHit();
+            }
+          }
+        } 
+        else if (currentPhase >= 8 && currentPhase <= 9) {
+          // Planetary Formation and Earth Emerges phases
+          if (this.gameState.useEnergy(6)) {
+            // Higher chance to create planets in these phases
+            if (Math.random() < 0.4) {
+              // Create a planet with scientific properties
+              const planetEnergy = 0.3 + Math.random() * 0.4;
+              const newPlanet = this.createPlant(x, y, planetEnergy);
+              const planetSize = newPlanet.size;
+              
+              // Find nearby stars to orbit - scientifically accurate orbital mechanics
+              let foundStar = false;
+              for (const star of this.plants) {
+                if (star.type === 'star' && distance(x, y, star.x, star.y) < 150) {
+                  // Make this planet orbit the star following Kepler's laws
+                  const dist = distance(x, y, star.x, star.y);
+                  const angle = Math.atan2(y - star.y, x - star.x);
+                  
+                  // Calculate orbital properties based on distance from star
+                  // Using scientific principles (approximating Kepler's Third Law)
+                  const starMass = star.cosmicProperties.stellarMass || 1;
+                  const orbitPeriod = Math.sqrt(Math.pow(dist/50, 3) / starMass);
+                  
+                  // Create satellite with proper orbital mechanics
+                  const satellite = new Satellite(dist, angle, planetSize * 0.8);
+                  satellite.orbitPeriod = orbitPeriod;
+                  satellite.orbitEccentricity = Math.random() * 0.3; // Random eccentricity
+                  star.satellites.push(satellite);
+                  
+                  // Remove the independent planet since it's now a satellite
+                  const index = this.plants.indexOf(newPlanet);
+                  if (index !== -1) {
+                    this.plants.splice(index, 1);
+                  }
+                  
+                  foundStar = true;
+                  break;
+                }
+              }
+              
+              this.createWaveDisturbance(x, y, 35, 0.6);
+              this.audioManager.playSuccess();
+            } else {
+              const particle = this.createParticle(x, y);
+              particle.speed = 20 + Math.random() * 20;
+              particle.lifespan = 15 + Math.random() * 20;
+              this.createWaveDisturbance(x, y, 20, 0.3);
+              this.audioManager.playHit();
+            }
+          }
+        }
+        else if (currentPhase >= 10) {
+          // Chemical Evolution and beyond
+          if (this.gameState.useEnergy(4)) {
+            // These phases focus on life and chemistry
+            // Find nearby planets to enhance
+            let foundPlanet = false;
+            for (const plant of this.plants) {
+              if ((plant.type === 'planet' || plant.type === 'lifeForm') && 
+                  distance(x, y, plant.x, plant.y) < 100) {
+                // Enhance existing planet's habitability and life complexity
+                plant.habitability = Math.min(1.0, plant.habitability + 0.1);
+                
+                if (plant.habitability > 0.5 && currentPhase >= 11) {
+                  plant.lifeComplexity = Math.min(1.0, plant.lifeComplexity + 0.1);
+                  
+                  // Change type to lifeForm if complexity is high enough
+                  if (plant.lifeComplexity > 0.5 && plant.type === 'planet') {
+                    plant.type = 'lifeForm';
+                  }
+                }
+                
+                this.createWaveDisturbance(plant.x, plant.y, 40, 0.5);
+                this.audioManager.playSuccess();
+                foundPlanet = true;
+                break;
+              }
+            }
+            
+            if (!foundPlanet) {
+              // Create particles representing complex chemistry
+              const particle = this.createParticle(x, y);
+              particle.speed = 15 + Math.random() * 15;
+              particle.lifespan = 20 + Math.random() * 25;
+              particle.wavelength = 12 + Math.random() * 8;
+              this.createWaveDisturbance(x, y, 25, 0.4);
+              this.audioManager.playHit();
+            }
+          }
+        }
+        else {
+          // Default for other phases
+          if (this.gameState.useEnergy(3)) {
+            const particle = this.createParticle(x, y);
+            this.createWaveDisturbance(x, y, 20, 0.3);
+            this.audioManager.playHit();
+          }
+        }
+        
+        this.gameState.registerParticleCreated();
+      }
+    }
+  }
+  
+  // Generate interior elements for a cosmic body that the player is entering
+  private generateInteriorElements(cosmicBody: Plant) {
+    // Clear any existing interior elements
+    cosmicBody.interior = [];
+    
+    // Generate different interior elements based on cosmic body type
+    switch (cosmicBody.type) {
+      case 'galaxy':
+        // Galaxies contain many stars, nebulae, and potentially black holes
+        const starCount = 10 + Math.floor(Math.random() * 15);
+        const nebulaCount = 2 + Math.floor(Math.random() * 3);
+        const blackHoleChance = 0.3; // 30% chance of having a central black hole
+        
+        // Add a central black hole for many galaxies
+        if (Math.random() < blackHoleChance) {
+          const blackHole = new Plant(
+            cosmicBody.x, 
+            cosmicBody.y, 
+            0.8 + Math.random() * 0.2,
+            Math.max(6, this.gameState.getCurrentPhase())
+          );
+          blackHole.type = 'blackhole';
+          blackHole.isInteractable = true;
+          blackHole.parent = cosmicBody;
+          
+          // Set scientific properties for the black hole
+          const stellarMass = 1000000 + Math.random() * 9000000; // Supermassive black hole (millions of solar masses)
+          blackHole.cosmicProperties = {
+            stellarMass,
+            eventHorizonRadius: stellarMass * 0.000001, // Simplified calculation
+            accretionDisk: true
+          };
+          
+          cosmicBody.interior.push(blackHole);
+        }
+        
+        // Add stars throughout the galaxy
+        for (let i = 0; i < starCount; i++) {
+          // Stars are distributed based on galaxy type
+          let x = 0, y = 0;
+          const galaxyType = cosmicBody.cosmicProperties.galaxyType || 'spiral';
+          
+          if (galaxyType === 'spiral') {
+            // Stars follow spiral arms
+            const spiralArms = cosmicBody.cosmicProperties.spiralArms || 4;
+            const arm = i % spiralArms;
+            const distanceFromCenter = Math.random() * 200;
+            const angle = (arm / spiralArms) * Math.PI * 2 + (distanceFromCenter * 0.02);
+            
+            x = cosmicBody.x + Math.cos(angle) * distanceFromCenter;
+            y = cosmicBody.y + Math.sin(angle) * distanceFromCenter;
+          } else if (galaxyType === 'elliptical') {
+            // Elliptical galaxies have more centrally concentrated stars
+            const angle = Math.random() * Math.PI * 2;
+            const distance = (Math.random() * Math.random()) * 200; // More stars near center
+            
+            x = cosmicBody.x + Math.cos(angle) * distance;
+            y = cosmicBody.y + Math.sin(angle) * distance;
+          } else {
+            // Irregular galaxies have random star distribution
+            x = cosmicBody.x + (Math.random() * 400 - 200);
+            y = cosmicBody.y + (Math.random() * 400 - 200);
+          }
+          
+          // Create the star with realistic properties
+          const star = new Plant(
+            x, y, 
+            0.3 + Math.random() * 0.7,
+            Math.max(6, this.gameState.getCurrentPhase())
+          );
+          star.type = 'star';
+          star.isInteractable = true;
+          star.parent = cosmicBody;
+          
+          cosmicBody.interior.push(star);
+        }
+        
+        // Add nebulae
+        for (let i = 0; i < nebulaCount; i++) {
+          const x = cosmicBody.x + (Math.random() * 400 - 200);
+          const y = cosmicBody.y + (Math.random() * 400 - 200);
+          
+          const nebula = new Plant(
+            x, y,
+            0.5 + Math.random() * 0.5,
+            Math.max(5, this.gameState.getCurrentPhase())
+          );
+          nebula.type = 'nebula';
+          nebula.isInteractable = true;
+          nebula.parent = cosmicBody;
+          
+          cosmicBody.interior.push(nebula);
+        }
+        break;
+        
+      case 'star':
+        // Stars have orbiting planets
+        const planetCount = 2 + Math.floor(Math.random() * 6); // 2-7 planets
+        
+        // Determine habitable zone based on star type
+        const starType = cosmicBody.cosmicProperties.starType || 'main_sequence';
+        const stellarMass = cosmicBody.cosmicProperties.stellarMass || 1;
+        let habitableZoneMin = 0;
+        let habitableZoneMax = 0;
+        
+        // Calculate the habitable zone (where liquid water can exist)
+        // Based on stellar luminosity which scales roughly with mass^3.5
+        const luminosity = Math.pow(stellarMass, 3.5);
+        habitableZoneMin = 0.95 * Math.sqrt(luminosity); // Inner edge in AU
+        habitableZoneMax = 1.37 * Math.sqrt(luminosity); // Outer edge in AU
+        
+        // Convert AU to pixel distances for visualization
+        const auScale = 30; // Pixels per AU
+        const habitableZoneMinPixels = habitableZoneMin * auScale;
+        const habitableZoneMaxPixels = habitableZoneMax * auScale;
+        
+        // Generate planets with proper spacing (following Titus-Bode law approximation)
+        for (let i = 0; i < planetCount; i++) {
+          // Calculate distance using an approximation of Titus-Bode law
+          // a = 0.4 + 0.3 * 2^n where n starts at -1
+          let distance = (0.4 + 0.3 * Math.pow(2, i - 1)) * auScale;
+          distance *= (1 + (Math.random() * 0.2 - 0.1)); // Add some variation
+          
+          // Place planet at calculated distance and random angle
+          const angle = Math.random() * Math.PI * 2;
+          const x = cosmicBody.x + Math.cos(angle) * distance;
+          const y = cosmicBody.y + Math.sin(angle) * distance;
+          
+          // Create the planet
+          const planet = new Plant(
+            x, y,
+            0.2 + Math.random() * 0.4,
+            Math.max(8, this.gameState.getCurrentPhase())
+          );
+          
+          // Determine planet type based on distance from star
+          let isInHabitableZone = false;
+          if (distance < habitableZoneMinPixels * 0.5) {
+            // Inner planets tend to be small and rocky
+            planet.type = 'planet';
+            planet.cosmicProperties.planetType = 'rocky';
+          } else if (distance > habitableZoneMaxPixels * 2) {
+            // Outer planets tend to be gas giants or ice giants
+            planet.type = Math.random() < 0.7 ? 'gas_giant' : 'planet';
+            planet.cosmicProperties.planetType = planet.type === 'gas_giant' ? 'gas_giant' : 'ice_giant';
+          } else {
+            // Middle zone planets are mixed
+            planet.type = 'planet';
+            planet.cosmicProperties.planetType = Math.random() < 0.6 ? 'rocky' : 'gas_giant';
+            
+            // Check if the planet is in the habitable zone
+            if (distance >= habitableZoneMinPixels && distance <= habitableZoneMaxPixels &&
+                planet.cosmicProperties.planetType === 'rocky') {
+              isInHabitableZone = true;
+            }
+          }
+          
+          // Planets in habitable zone have a chance for habitability if star type is suitable
+          if (isInHabitableZone && 
+              (starType === 'main_sequence' || starType === 'yellow_dwarf') &&
+              this.gameState.getCurrentPhase() >= 9) {
+            planet.habitability = 0.3 + Math.random() * 0.7;
+            
+            // Some habitable planets may develop life in later phases
+            if (this.gameState.getCurrentPhase() >= 11 && Math.random() < 0.5) {
+              planet.lifeComplexity = 0.1 + Math.random() * 0.4;
+            }
+          }
+          
+          planet.isInteractable = true;
+          planet.parent = cosmicBody;
+          
+          cosmicBody.interior.push(planet);
+        }
+        break;
+        
+      case 'planet':
+        // Planets have surface features
+        // If the planet has habitability, show more detailed features
+        if (cosmicBody.habitability > 0) {
+          const featureCount = 15 + Math.floor(Math.random() * 20);
+          
+          // Generate geographic features: mountains, lakes, forests, etc.
+          for (let i = 0; i < featureCount; i++) {
+            // Distribute features across planet surface
+            const angle = Math.random() * Math.PI * 2;
+            const distance = Math.random() * 150;
+            const x = cosmicBody.x + Math.cos(angle) * distance;
+            const y = cosmicBody.y + Math.sin(angle) * distance;
+            
+            // Create different geographic feature types
+            const featureTypeProbability = Math.random();
+            let featureType = 'plant'; // Default type
+            
+            if (featureTypeProbability < 0.3) {
+              // Water bodies if the planet has hydrosphere
+              if (cosmicBody.cosmicProperties.hydrosphere && cosmicBody.cosmicProperties.hydrosphere > 0.2) {
+                featureType = 'plant'; // Representing water
+              }
+            } else if (featureTypeProbability < 0.6) {
+              // Land features
+              featureType = 'plant'; // Representing mountains/terrain
+            } else {
+              // Vegetation if life complexity is high enough
+              if (cosmicBody.lifeComplexity > 0.1) {
+                featureType = 'plant'; // Representing vegetation
+              }
+            }
+            
+            const feature = new Plant(
+              x, y,
+              0.1 + Math.random() * 0.2,
+              this.gameState.getCurrentPhase()
+            );
+            feature.type = featureType;
+            feature.parent = cosmicBody;
+            
+            cosmicBody.interior.push(feature);
+          }
+          
+          // If the planet has advanced life, add some primitive structures
+          if (cosmicBody.lifeComplexity > 0.5 && this.gameState.getCurrentPhase() >= 12) {
+            const structureCount = 3 + Math.floor(Math.random() * 5);
+            
+            for (let i = 0; i < structureCount; i++) {
+              const angle = Math.random() * Math.PI * 2;
+              const distance = 20 + Math.random() * 130;
+              const x = cosmicBody.x + Math.cos(angle) * distance;
+              const y = cosmicBody.y + Math.sin(angle) * distance;
+              
+              const structure = new Plant(
+                x, y,
+                0.15 + Math.random() * 0.2,
+                this.gameState.getCurrentPhase()
+              );
+              structure.type = 'lifeForm';
+              structure.parent = cosmicBody;
+              
+              cosmicBody.interior.push(structure);
+            }
+          }
+        } else {
+          // Barren planets have craters, mountains, etc.
+          const featureCount = 10 + Math.floor(Math.random() * 15);
+          
+          for (let i = 0; i < featureCount; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const distance = Math.random() * 150;
+            const x = cosmicBody.x + Math.cos(angle) * distance;
+            const y = cosmicBody.y + Math.sin(angle) * distance;
+            
+            const feature = new Plant(
+              x, y,
+              0.1 + Math.random() * 0.2,
+              this.gameState.getCurrentPhase()
+            );
+            feature.type = 'plant';
+            feature.parent = cosmicBody;
+            
+            cosmicBody.interior.push(feature);
+          }
+        }
+        break;
+        
+      case 'blackhole':
+        // Black holes have accretion disks and intense radiation
+        const particleCount = 30 + Math.floor(Math.random() * 20);
+        
+        // Create spiraling particles
+        for (let i = 0; i < particleCount; i++) {
+          const angle = (i / particleCount) * Math.PI * 2;
+          const distance = 20 + Math.random() * 100;
+          
+          const x = cosmicBody.x + Math.cos(angle) * distance;
+          const y = cosmicBody.y + Math.sin(angle) * distance;
+          
+          // Create high-energy particles in the accretion disk
+          const particle = this.createParticle(x, y, angle + Math.PI/2);
+          particle.energy = 10 + Math.random() * 10;
+          particle.lifespan = 30 + Math.random() * 20;
+          
+          // These particles orbit the black hole
+          particle.direction = angle + Math.PI/2; // Tangential movement
+          particle.speed = 50 + Math.random() * 30;
+        }
+        break;
+        
+      case 'nebula':
+        // Nebulae contain gas clouds and protostars
+        const cloudCount = 10 + Math.floor(Math.random() * 15);
+        const protostarCount = 1 + Math.floor(Math.random() * 3);
+        
+        // Create gas clouds
+        for (let i = 0; i < cloudCount; i++) {
+          const distance = Math.random() * 150;
+          const angle = Math.random() * Math.PI * 2;
+          
+          const x = cosmicBody.x + Math.cos(angle) * distance;
+          const y = cosmicBody.y + Math.sin(angle) * distance;
+          
+          const cloud = new Plant(
+            x, y,
+            0.2 + Math.random() * 0.3,
+            Math.max(5, this.gameState.getCurrentPhase())
+          );
+          cloud.type = 'plant';
+          cloud.parent = cosmicBody;
+          
+          cosmicBody.interior.push(cloud);
+        }
+        
+        // Create protostars (young stars being formed)
+        for (let i = 0; i < protostarCount; i++) {
+          const distance = 20 + Math.random() * 130;
+          const angle = Math.random() * Math.PI * 2;
+          
+          const x = cosmicBody.x + Math.cos(angle) * distance;
+          const y = cosmicBody.y + Math.sin(angle) * distance;
+          
+          const protostar = new Plant(
+            x, y,
+            0.3 + Math.random() * 0.4,
+            Math.max(5, this.gameState.getCurrentPhase())
+          );
+          protostar.type = 'protostar';
+          protostar.parent = cosmicBody;
+          
+          cosmicBody.interior.push(protostar);
+        }
+        break;
+    }
+  }
+  
+  // Toggle quantum entanglement mode
+  private toggleEntanglement() {
+    if (this.gameState.useEnergy(10)) {
+      // Entangle nearby particles
+      const groups: Particle[][] = [];
+      const processed = new Set<Particle>();
+      
+      for (const p of this.particles) {
+        if (processed.has(p)) continue;
+        
+        const group = [p];
+        processed.add(p);
+        
+        for (const other of this.particles) {
+          if (other !== p && !processed.has(other) && 
+              distance(p.x, p.y, other.x, other.y) < 100) {
+            group.push(other);
+            processed.add(other);
+          }
+        }
+        
+        if (group.length > 1) {
+          groups.push(group);
+        }
+      }
+      
+      // Entangle each group
+      for (const group of groups) {
+        const avgDirection = group.reduce((sum, p) => sum + p.direction, 0) / group.length;
+        
+        // Create a visual connection effect between particles
+        if (group.length >= 2) {
+          for (let i = 0; i < group.length; i++) {
+            for (let j = i + 1; j < group.length; j++) {
+              const p1 = group[i];
+              const p2 = group[j];
+              
+              // Create wave disturbance along the connection path
+              const steps = 10;
+              for (let s = 0; s <= steps; s++) {
+                const t = s / steps;
+                const x = p1.x + (p2.x - p1.x) * t;
+                const y = p1.y + (p2.y - p1.y) * t;
+                this.createWaveDisturbance(x, y, 5, 0.5);
+              }
+            }
+          }
+        }
+        
+        for (const p of group) {
+          p.direction = avgDirection;
+          p.entangled = true;
+          p.speed *= 1.5; // Entangled particles move faster
+          p.wavelength *= 1.2; // Increase wave effect for entangled particles
+        }
+      }
+      
+      // Play sound
+      this.audioManager.playHit();
+      
+      // Add score based on number of entangled particles
+      this.gameState.addScore(processed.size * 5);
+      
+      // Visual feedback - flash the screen slightly
+      const canvas = this.canvas;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(255, 255, 100, 0.1)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.restore();
+        
+        // Reset flash after a brief moment
+        setTimeout(() => {
+          this.render();
+        }, 100);
+      }
+    }
+  }
+  
+  // Collapse wave function
+  private collapseWaveFunction() {
+    if (this.gameState.useEnergy(20)) {
+      // Dramatic collapse of all wave functions
+      for (let i = 0; i < this.fieldPotential.length; i++) {
+        for (let j = 0; j < this.fieldPotential[0].length; j++) {
+          // Wave collapse means the field value is either high or low, not in between
+          this.fieldPotential[i][j] = Math.random() < 0.5 ? -1 : 1;
+        }
+      }
+      
+      // Particles get random new directions
+      for (const p of this.particles) {
+        p.direction = Math.random() * Math.PI * 2;
+        p.entangled = false;
+        
+        // Create a small explosion effect at each particle
+        this.createWaveDisturbance(p.x, p.y, 15, 2.0);
+      }
+      
+      // Plants get a growth boost
+      for (const plant of this.plants) {
+        plant.grow(0.2);
+        
+        // Create a growth pulse effect around each plant
+        this.createWaveDisturbance(plant.x, plant.y, 30, 1.5);
+      }
+      
+      // Visual effect - flash the screen
+      const canvas = this.canvas;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.restore();
+        
+        // Reset flash after a brief moment
+        setTimeout(() => {
+          this.render();
+        }, 100);
+      }
+      
+      // Play sound
+      this.audioManager.playSuccess();
+      
+      // Add score
+      this.gameState.addScore(50);
+    }
+  }
+  
+  // Increase field energy
+  private increaseFieldEnergy() {
+    if (this.gameState.useEnergy(5)) {
+      // Boost field energy everywhere with ripple effect
+      const centerX = Math.floor(this.fieldPotential.length / 2);
+      const centerY = Math.floor(this.fieldPotential[0].length / 2);
+      
+      // Create ripples of energy spreading from center
+      for (let i = 0; i < this.fieldPotential.length; i++) {
+        for (let j = 0; j < this.fieldPotential[0].length; j++) {
+          const distance = Math.sqrt((i - centerX) ** 2 + (j - centerY) ** 2);
+          const delay = distance * 30; // ms delay based on distance
+          
+          // Use timeout to create ripple effect
+          setTimeout(() => {
+            if (i < this.fieldPotential.length && j < this.fieldPotential[0].length) {
+              this.fieldPotential[i][j] *= 1.5;
+            }
+          }, delay);
+        }
+      }
+      
+      // Increase particle energy with visual effect
+      for (const p of this.particles) {
+        p.energy *= 1.2;
+        p.speed *= 1.1; // Temporary speed boost
+        
+        // Create energy burst effect
+        this.createWaveDisturbance(p.x, p.y, 10, 1.0);
+      }
+      
+      // Visual effect - energy pulse
+      const canvas = this.canvas;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.save();
+        const gradient = ctx.createRadialGradient(
+          this.width / 2, this.height / 2, 0,
+          this.width / 2, this.height / 2, this.width
+        );
+        gradient.addColorStop(0, 'rgba(0, 100, 255, 0.3)');
+        gradient.addColorStop(1, 'rgba(0, 100, 255, 0)');
+        
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, this.width, this.height);
+        ctx.restore();
+        
+        // Reset after a brief moment
+        setTimeout(() => {
+          this.render();
+        }, 200);
+      }
+      
+      // Play sound
+      this.audioManager.playHit();
+      
+      // Add score
+      this.gameState.addScore(10);
+    }
+  }
+  
+  // Universe evolution methods
+  public getGameState() {
+    return this.gameState;
+  }
+  
+  public getCurrentPhase() {
+    return this.gameState.getCurrentPhase?.() || 0;
+  }
+  
+  public getUniversePhase() {
+    return this.gameState.getUniversePhase?.();
+  }
+  
+  public getAllPhases() {
+    return this.gameState.getAllPhases?.() || [];
+  }
+  
+  public getCosmicElements() {
+    return this.gameState.getCosmicElements?.() || [];
+  }
+  
+  public triggerBigBang() {
+    if (this.gameState.attemptBigBang?.()) {
+      // Create a massive explosion of particles from the center
+      const centerX = this.width / 2;
+      const centerY = this.height / 2;
+      
+      // Create many particles in all directions - more for a more dramatic effect
+      const particleCount = 150;
+      for (let i = 0; i < particleCount; i++) {
+        const angle = (i / particleCount) * Math.PI * 2;
+        const distance = Math.random() * 100; // Larger initial explosion radius
+        
+        const x = centerX + Math.cos(angle) * distance;
+        const y = centerY + Math.sin(angle) * distance;
+        
+        // Create particles flying outward with higher energy
+        const particle = this.createParticle(x, y, angle);
+        particle.energy *= 3; // More energetic particles
+        particle.speed *= 2;  // Faster particles
+      }
+      
+      // Create multiple wave disturbances for a more dramatic effect
+      for (let i = 0; i < 5; i++) {
+        setTimeout(() => {
+          const radius = 50 + i * 30;
+          this.createWaveDisturbance(centerX, centerY, radius, 5.0 - i * 0.5);
+        }, i * 100); // Staggered timing for wave effects
+      }
+      
+      // Play the sound effect
+      this.audioManager.playSuccess();
+      
+      // Visual explosion effect
+      const canvas = this.canvas;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        // Flash the entire screen white
+        ctx.save();
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+        ctx.fillRect(0, 0, this.width, this.height);
+        ctx.restore();
+        
+        // Create expanding shockwave rings
+        for (let i = 0; i < 3; i++) {
+          setTimeout(() => {
+            if (ctx) {
+              ctx.save();
+              ctx.strokeStyle = `rgba(255, 255, 255, ${0.7 - i * 0.2})`;
+              ctx.lineWidth = 10 - i * 2;
+              ctx.beginPath();
+              const radius = (i + 1) * 100;
+              ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+              ctx.stroke();
+              ctx.restore();
+              
+              // Redraw after a moment
+              setTimeout(() => this.render(), 300);
+            }
+          }, i * 200);
+        }
+      }
+      
+      return true;
+    }
+    
+    return false;
+  }
+  
+  // Entanglement function for Q key
+  public triggerEntanglement() {
+    this.toggleEntanglement();
+  }
+  
+  // Wave collapse function for W key
+  public triggerWaveCollapse() {
+    this.collapseWaveFunction();
+  }
+  
+  // Energy boost function for E key
+  public triggerEnergyBoost() {
+    this.increaseFieldEnergy();
+  }
+  
+  // Challenge system
+  public startRandomChallenge() {
+    return this.gameState.startRandomChallenge?.();
+  }
+  
+  // Public methods
+  
+  public resize(width: number, height: number) {
+    this.width = width;
+    this.height = height;
+    
+    // Resize the field (recreate with new dimensions)
+    this.fieldPotential = generatePerlinNoise(
+      Math.ceil(width / 10), 
+      Math.ceil(height / 10),
+      0.1
+    );
+  }
+  
+  public reset() {
+    // Clear all entities
+    this.particles = [];
+    this.plants = [];
+    
+    // Reset quantum field
+    this.initField();
+    
+    // Reset game state
+    this.gameState.reset();
+    
+    // Update UI
+    this.callbacks.onScoreUpdate(0);
+    this.callbacks.onEnergyUpdate(100);
+    this.callbacks.onPlantCountUpdate(0);
+    
+    // Update cosmic parameters if callback exists
+    if (this.callbacks.onCosmicParametersUpdated) {
+      this.callbacks.onCosmicParametersUpdated({
+        cosmicAge: 0,
+        expansionRate: 1.0,
+        matterDensity: 0,
+        energyDensity: 1.0
+      });
+    }
+  }
+  
+  public pause() {
+    this.isRunning = false;
+  }
+  
+  public resume() {
+    this.isRunning = true;
+    this.lastTimestamp = performance.now();
+  }
+  
+  public togglePause() {
+    this.isRunning = !this.isRunning;
+    if (this.isRunning) {
+      this.lastTimestamp = performance.now();
+    }
+  }
+  
+  public destroy() {
+    // Clean up event listeners
+    this.inputHandler.destroy();
+    
+    // Stop animation loop
+    if (this.animationFrameId !== null) {
+      cancelAnimationFrame(this.animationFrameId);
+    }
+  }
+}

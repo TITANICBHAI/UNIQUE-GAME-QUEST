@@ -1,0 +1,2290 @@
+import { Particle } from './Particle';
+import { Plant, CosmicBodyType } from './Plant';
+
+export class Renderer {
+  private canvas: HTMLCanvasElement;
+  private ctx: CanvasRenderingContext2D | null;
+  private width: number;
+  private height: number;
+  private universePhase: number = 0;
+  private starField: {x: number, y: number, size: number, brightness: number}[] = [];
+  private galaxies: {x: number, y: number, size: number, rotation: number, type: string}[] = [];
+  private cosmicDust: {x: number, y: number, size: number, color: string}[] = [];
+  private focusedObject: Plant | null = null; // Currently focused object (entered)
+  private hoverPlant: Plant | null = null; // Plant currently hovered over
+  private zoomLevel: number = 1.0; // Zoom level for camera
+  private viewOffsetX: number = 0; // Camera X offset
+  private viewOffsetY: number = 0; // Camera Y offset
+  
+  // Flag to indicate if we need to render interior elements
+  private renderingInterior: boolean = false;
+  
+  constructor(canvas: HTMLCanvasElement) {
+    this.canvas = canvas;
+    const context = canvas.getContext('2d');
+    if (!context) {
+      throw new Error('Could not get 2D context from canvas');
+    }
+    this.ctx = context;
+    this.width = canvas.width;
+    this.height = canvas.height;
+    
+    // Generate star field for later phases
+    this.initializeCosmicObjects();
+  }
+  
+  // Initialize cosmic visualization elements
+  private initializeCosmicObjects() {
+    // Generate stars with deterministic positioning
+    const starCount = 100;
+    this.starField = [];
+    
+    for (let i = 0; i < starCount; i++) {
+      // Use cosine/sine patterns to create non-random but well-distributed stars
+      const x = (Math.cos(i * 0.67) * 0.5 + 0.5) * this.width;
+      const y = (Math.sin(i * 0.39) * 0.5 + 0.5) * this.height;
+      const size = (Math.sin(i * 0.43) * 0.5 + 0.5) * 2 + 0.5;
+      const brightness = Math.sin(i * 0.37) * 0.2 + 0.8;
+      
+      this.starField.push({ x, y, size, brightness });
+    }
+    
+    // Generate galaxies
+    const galaxyCount = 5;
+    this.galaxies = [];
+    
+    const galaxyTypes = ['spiral', 'elliptical', 'irregular'];
+    for (let i = 0; i < galaxyCount; i++) {
+      const x = (Math.cos(i * 1.5) * 0.4 + 0.5) * this.width;
+      const y = (Math.sin(i * 1.7) * 0.4 + 0.5) * this.height;
+      const size = 30 + Math.sin(i * 3.14) * 10;
+      const rotation = i * Math.PI / galaxyCount;
+      const type = galaxyTypes[i % galaxyTypes.length];
+      
+      this.galaxies.push({ x, y, size, rotation, type });
+    }
+    
+    // Generate cosmic dust clouds
+    const dustCount = 20;
+    this.cosmicDust = [];
+    
+    for (let i = 0; i < dustCount; i++) {
+      const x = (Math.cos(i * 0.9) * 0.5 + 0.5) * this.width;
+      const y = (Math.sin(i * 1.1) * 0.5 + 0.5) * this.height;
+      const size = 50 + Math.sin(i * 2.7) * 30;
+      
+      // Generate a color for the dust
+      const hue = (i * 30) % 360;
+      const color = `hsla(${hue}, 50%, 70%, 0.1)`;
+      
+      this.cosmicDust.push({ x, y, size, color });
+    }
+  }
+  
+  setUniversePhase(phase: number) {
+    this.universePhase = phase;
+  }
+  
+  // Set the currently focused object (for entering celestial bodies)
+  setFocusedObject(object: Plant | null) {
+    this.focusedObject = object;
+    this.zoomLevel = object ? 1.5 : 1.0; // Zoom in when entering an object
+    this.viewOffsetX = 0;
+    this.viewOffsetY = 0;
+  }
+  
+  // Check if a point is inside the exit button area
+  isInsideExitButton(x: number, y: number): boolean {
+    // Exit button is in top-right corner
+    return x >= this.width - 80 && x <= this.width - 10 && y >= 10 && y <= 40;
+  }
+  
+  // Render a special background for cosmic body interiors
+  renderInteriorBackground(cosmicBody: Plant) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    
+    switch(cosmicBody.type) {
+      case 'galaxy':
+        // For galaxies, render a starfield with galaxy structure
+        ctx.fillStyle = '#000005';
+        ctx.fillRect(0, 0, this.width, this.height);
+        
+        // Add some nebula-like colors based on galaxy type
+        const galaxyType = cosmicBody.cosmicProperties.galaxyType || 'spiral';
+        
+        if (galaxyType === 'spiral') {
+          // Spiral galaxies have visible arms and structure
+          const centerX = this.width / 2;
+          const centerY = this.height / 2;
+          const spiralArms = cosmicBody.cosmicProperties.spiralArms || 4;
+          
+          // Draw subtle spiral arm structure
+          for (let arm = 0; arm < spiralArms; arm++) {
+            const baseAngle = (arm / spiralArms) * Math.PI * 2;
+            
+            ctx.beginPath();
+            for (let r = 0; r < 200; r += 5) {
+              const angle = baseAngle + (r * 0.015);
+              const x = centerX + Math.cos(angle) * r;
+              const y = centerY + Math.sin(angle) * r;
+              
+              if (r === 0) {
+                ctx.moveTo(x, y);
+              } else {
+                ctx.lineTo(x, y);
+              }
+            }
+            
+            // Create spiral arm glow
+            const gradient = ctx.createLinearGradient(centerX, centerY, centerX + 200, centerY);
+            gradient.addColorStop(0, 'rgba(255, 255, 255, 0.05)');
+            gradient.addColorStop(0.3, 'rgba(120, 150, 255, 0.03)');
+            gradient.addColorStop(0.6, 'rgba(180, 180, 255, 0.02)');
+            gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+            
+            ctx.strokeStyle = gradient;
+            ctx.lineWidth = 30;
+            ctx.stroke();
+          }
+        } else if (galaxyType === 'elliptical') {
+          // Elliptical galaxies have a central concentration of stars
+          const centerX = this.width / 2;
+          const centerY = this.height / 2;
+          
+          // Draw elliptical halo
+          const gradient = ctx.createRadialGradient(
+            centerX, centerY, 10,
+            centerX, centerY, 250
+          );
+          gradient.addColorStop(0, 'rgba(255, 255, 200, 0.05)');
+          gradient.addColorStop(0.3, 'rgba(200, 200, 150, 0.03)');
+          gradient.addColorStop(0.7, 'rgba(150, 150, 100, 0.01)');
+          gradient.addColorStop(1, 'rgba(100, 100, 50, 0)');
+          
+          ctx.fillStyle = gradient;
+          ctx.beginPath();
+          ctx.ellipse(centerX, centerY, 250, 180, 0, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          // Irregular galaxies have chaotic structure
+          const centerX = this.width / 2;
+          const centerY = this.height / 2;
+          
+          // Draw random nebula-like patches
+          for (let i = 0; i < 5; i++) {
+            const x = centerX + (Math.random() * 300 - 150);
+            const y = centerY + (Math.random() * 300 - 150);
+            const radius = 30 + Math.random() * 70;
+            
+            const gradient = ctx.createRadialGradient(
+              x, y, 5,
+              x, y, radius
+            );
+            
+            // Random colors for irregular galaxy
+            const hue = Math.random() * 60 + 200; // Blues/purples
+            gradient.addColorStop(0, `hsla(${hue}, 80%, 70%, 0.05)`);
+            gradient.addColorStop(0.5, `hsla(${hue}, 60%, 40%, 0.03)`);
+            gradient.addColorStop(1, `hsla(${hue}, 40%, 20%, 0)`);
+            
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.ellipse(x, y, radius, radius * (0.5 + Math.random() * 0.5), Math.random() * Math.PI, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+        
+        // Add stars
+        const starDensity = cosmicBody.cosmicProperties.starDensity || 0.5;
+        const starCount = Math.floor(starDensity * 500);
+        
+        for (let i = 0; i < starCount; i++) {
+          const x = Math.random() * this.width;
+          const y = Math.random() * this.height;
+          const size = Math.random() * 2 + 0.5;
+          
+          // Star brightness based on position (brighter near center)
+          const distFromCenter = Math.sqrt(
+            Math.pow((x - this.width/2) / (this.width/2), 2) + 
+            Math.pow((y - this.height/2) / (this.height/2), 2)
+          );
+          
+          const brightness = 0.5 + (1 - Math.min(1, distFromCenter)) * 0.5;
+          
+          ctx.fillStyle = `rgba(255, 255, 255, ${brightness})`;
+          ctx.beginPath();
+          ctx.arc(x, y, size, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        break;
+        
+      case 'star':
+        // For stars, render a glowing stellar atmosphere
+        const starType = cosmicBody.cosmicProperties.starType || 'main_sequence';
+        const temperature = cosmicBody.cosmicProperties.temperature || 5500;
+        
+        // Map temperature to color (using blackbody radiation approximation)
+        // Stefan-Boltzmann law and Wien's displacement law
+        let starColor;
+        if (temperature > 30000) starColor = '#AABFFF'; // Very hot blue
+        else if (temperature > 20000) starColor = '#CAD7FF'; // Blue
+        else if (temperature > 10000) starColor = '#F8F7FF'; // Blue-white
+        else if (temperature > 7500) starColor = '#FFFFFF'; // White
+        else if (temperature > 6000) starColor = '#FFF9F5'; // Yellow-white
+        else if (temperature > 5000) starColor = '#FFF5E9'; // Yellow
+        else if (temperature > 3500) starColor = '#FFEBD1'; // Orange
+        else starColor = '#FFD2A1'; // Red
+        
+        // Draw the star's atmosphere
+        const centerX = this.width / 2;
+        const centerY = this.height / 2;
+        
+        // Stellar atmosphere
+        const gradient = ctx.createRadialGradient(
+          centerX, centerY, 10,
+          centerX, centerY, this.width / 1.5
+        );
+        gradient.addColorStop(0, starColor);
+        gradient.addColorStop(0.2, starColor.replace('FF', 'CC')); // Reduce alpha
+        gradient.addColorStop(0.4, starColor.replace('FF', '66')); // Reduce more
+        gradient.addColorStop(0.6, starColor.replace('FF', '33')); 
+        gradient.addColorStop(1, '#000000');
+        
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, this.width, this.height);
+        
+        // Stellar surface features
+        if (starType === 'red_giant' || starType === 'red_dwarf') {
+          // Convection cells on cooler stars
+          for (let i = 0; i < 20; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const distance = Math.random() * 100;
+            const x = centerX + Math.cos(angle) * distance;
+            const y = centerY + Math.sin(angle) * distance;
+            const size = 10 + Math.random() * 30;
+            
+            ctx.fillStyle = 'rgba(255, 220, 180, 0.1)';
+            ctx.beginPath();
+            ctx.arc(x, y, size, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        } else if (starType === 'main_sequence' || starType === 'yellow_dwarf') {
+          // Sunspots and flares
+          for (let i = 0; i < 8; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const distance = 30 + Math.random() * 70;
+            const x = centerX + Math.cos(angle) * distance;
+            const y = centerY + Math.sin(angle) * distance;
+            const size = 5 + Math.random() * 15;
+            
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+            ctx.beginPath();
+            ctx.arc(x, y, size, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          
+          // Solar flares
+          for (let i = 0; i < 3; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const baseX = centerX + Math.cos(angle) * 120;
+            const baseY = centerY + Math.sin(angle) * 120;
+            
+            ctx.beginPath();
+            ctx.moveTo(baseX, baseY);
+            
+            // Create a curved flare
+            const controlX1 = baseX + Math.cos(angle) * 50 - Math.sin(angle) * 50;
+            const controlY1 = baseY + Math.sin(angle) * 50 + Math.cos(angle) * 50;
+            const controlX2 = baseX + Math.cos(angle) * 100 + Math.sin(angle) * 30;
+            const controlY2 = baseY + Math.sin(angle) * 100 - Math.cos(angle) * 30;
+            const endX = baseX + Math.cos(angle) * 150;
+            const endY = baseY + Math.sin(angle) * 150;
+            
+            ctx.bezierCurveTo(controlX1, controlY1, controlX2, controlY2, endX, endY);
+            
+            const gradient = ctx.createLinearGradient(baseX, baseY, endX, endY);
+            gradient.addColorStop(0, 'rgba(255, 255, 220, 0.7)');
+            gradient.addColorStop(1, 'rgba(255, 200, 100, 0)');
+            
+            ctx.strokeStyle = gradient;
+            ctx.lineWidth = 3 + Math.random() * 5;
+            ctx.stroke();
+          }
+        } else if (starType === 'blue_giant') {
+          // Intense radiation
+          for (let i = 0; i < 30; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const length = 150 + Math.random() * 150;
+            const baseX = centerX + Math.cos(angle) * 120;
+            const baseY = centerY + Math.sin(angle) * 120;
+            const endX = baseX + Math.cos(angle) * length;
+            const endY = baseY + Math.sin(angle) * length;
+            
+            const gradient = ctx.createLinearGradient(baseX, baseY, endX, endY);
+            gradient.addColorStop(0, 'rgba(180, 220, 255, 0.5)');
+            gradient.addColorStop(1, 'rgba(100, 150, 255, 0)');
+            
+            ctx.strokeStyle = gradient;
+            ctx.lineWidth = 1 + Math.random() * 3;
+            ctx.beginPath();
+            ctx.moveTo(baseX, baseY);
+            ctx.lineTo(endX, endY);
+            ctx.stroke();
+          }
+        }
+        break;
+        
+      case 'planet':
+        // For planets, render a planetary surface
+        const planetType = cosmicBody.cosmicProperties.planetType || 'rocky';
+        const hasAtmosphere = (cosmicBody.cosmicProperties.atmosphere || 0) > 0.1;
+        
+        // Draw sky color based on atmosphere
+        let skyColor = '#000005'; // Default: space
+        if (hasAtmosphere) {
+          if (planetType === 'rocky' && cosmicBody.habitability > 0.3) {
+            // Earth-like atmosphere
+            skyColor = '#87CEEB'; // Sky blue
+          } else if (planetType === 'gas_giant') {
+            // Gas giant atmosphere
+            skyColor = '#A78F6E'; // Brownish
+          } else {
+            // Other atmospheres
+            skyColor = '#B0C4DE'; // Light steel blue
+          }
+        }
+        
+        // Fill background with sky/space
+        ctx.fillStyle = skyColor;
+        ctx.fillRect(0, 0, this.width, this.height);
+        
+        // Draw surface features based on planet type
+        if (planetType === 'rocky') {
+          // Mountains and terrain
+          for (let i = 0; i < 10; i++) {
+            const x = Math.random() * this.width;
+            const height = 100 + Math.random() * 80;
+            
+            ctx.fillStyle = cosmicBody.habitability > 0.3 ? '#8B4513' : '#696969'; // Brown or gray
+            ctx.beginPath();
+            ctx.moveTo(x - 100, this.height);
+            ctx.lineTo(x, this.height - height);
+            ctx.lineTo(x + 100, this.height);
+            ctx.closePath();
+            ctx.fill();
+          }
+          
+          // Water features for habitable planets
+          if (cosmicBody.habitability > 0.3 && cosmicBody.cosmicProperties.hydrosphere && 
+              cosmicBody.cosmicProperties.hydrosphere > 0.2) {
+            ctx.fillStyle = '#1E90FF'; // Dodger blue
+            ctx.fillRect(0, this.height - 80, this.width, 80);
+          }
+          
+          // Add vegetation for planets with life
+          if (cosmicBody.lifeComplexity > 0) {
+            const treeDensity = cosmicBody.lifeComplexity * 20; // More complex life = more trees
+            
+            for (let i = 0; i < treeDensity; i++) {
+              const x = Math.random() * this.width;
+              const y = this.height - 80 - Math.random() * 50;
+              
+              // Draw tree
+              ctx.fillStyle = '#006400'; // Dark green
+              ctx.beginPath();
+              ctx.moveTo(x, y);
+              ctx.lineTo(x - 15, y + 30);
+              ctx.lineTo(x + 15, y + 30);
+              ctx.closePath();
+              ctx.fill();
+              
+              ctx.fillStyle = '#8B4513'; // Brown
+              ctx.fillRect(x - 2, y + 30, 4, 10);
+            }
+            
+            // Advanced life adds structures
+            if (cosmicBody.lifeComplexity > 0.5) {
+              // Simple structures (like huts or buildings)
+              for (let i = 0; i < 3; i++) {
+                const x = 100 + i * 150;
+                const y = this.height - 100;
+                
+                ctx.fillStyle = '#A9A9A9'; // Dark gray
+                ctx.fillRect(x, y, 30, 20);
+                
+                // Roof
+                ctx.fillStyle = '#800000'; // Maroon
+                ctx.beginPath();
+                ctx.moveTo(x - 5, y);
+                ctx.lineTo(x + 15, y - 15);
+                ctx.lineTo(x + 35, y);
+                ctx.closePath();
+                ctx.fill();
+              }
+            }
+          }
+        } else if (planetType === 'gas_giant') {
+          // Cloud bands
+          const bandCount = 7;
+          const bandHeight = this.height / bandCount;
+          
+          for (let i = 0; i < bandCount; i++) {
+            // Alternate band colors
+            const baseHue = Math.random() < 0.5 ? 30 : 40; // Yellowish/brownish
+            const hue = baseHue + (i * 5);
+            const lightness = 50 + (i % 2) * 10;
+            
+            ctx.fillStyle = `hsl(${hue}, 80%, ${lightness}%)`;
+            ctx.fillRect(0, i * bandHeight, this.width, bandHeight);
+            
+            // Add swirls and storms
+            if (i % 2 === 0) {
+              for (let j = 0; j < 3; j++) {
+                const x = Math.random() * this.width;
+                const y = i * bandHeight + bandHeight / 2;
+                const radius = 10 + Math.random() * 30;
+                
+                const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
+                gradient.addColorStop(0, `hsla(${hue + 10}, 90%, ${lightness + 10}%, 0.8)`);
+                gradient.addColorStop(1, `hsla(${hue}, 80%, ${lightness}%, 0)`);
+                
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.arc(x, y, radius, 0, Math.PI * 2);
+                ctx.fill();
+              }
+            }
+          }
+          
+          // Great spot feature (like Jupiter's Great Red Spot)
+          const spotX = this.width / 3;
+          const spotY = this.height / 2;
+          const spotRadius = 40 + Math.random() * 20;
+          
+          const spotGradient = ctx.createRadialGradient(spotX, spotY, 0, spotX, spotY, spotRadius);
+          spotGradient.addColorStop(0, 'rgba(255, 100, 100, 0.8)');
+          spotGradient.addColorStop(1, 'rgba(200, 60, 60, 0)');
+          
+          ctx.fillStyle = spotGradient;
+          ctx.beginPath();
+          ctx.ellipse(spotX, spotY, spotRadius, spotRadius / 2, Math.PI / 4, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        break;
+        
+      case 'blackhole':
+        // For black holes, render an accretion disk and event horizon
+        // For black holes, we'll use different variables to avoid redeclaration
+        const bhCenterX = this.width / 2;
+        const bhCenterY = this.height / 2;
+        const eventHorizonRadius = cosmicBody.cosmicProperties.eventHorizonRadius || 50;
+        const hasAccretionDisk = cosmicBody.cosmicProperties.accretionDisk || false;
+        
+        // Black background
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, this.width, this.height);
+        
+        // Draw distorted space around black hole (gravitational lensing effect)
+        for (let i = 0; i < 200; i++) {
+          const distance = 100 + Math.random() * 300;
+          const angle = Math.random() * Math.PI * 2;
+          
+          // Stars get distorted around black hole
+          let x = centerX + Math.cos(angle) * distance;
+          let y = centerY + Math.sin(angle) * distance;
+          
+          // Apply gravitational lensing effect
+          const distFromCenter = Math.sqrt(Math.pow(x - centerX, 2) + Math.pow(y - centerY, 2));
+          const lensStrength = 50 / Math.max(50, distFromCenter);
+          
+          // Distort position based on lensing
+          const dx = x - centerX;
+          const dy = y - centerY;
+          const lensedDist = distance * (1 - lensStrength * 0.5);
+          x = centerX + Math.cos(angle) * lensedDist;
+          y = centerY + Math.sin(angle) * lensedDist;
+          
+          // Draw distorted star
+          const size = 1 + Math.random();
+          ctx.fillStyle = '#FFFFFF';
+          ctx.beginPath();
+          ctx.ellipse(x, y, size, size * (1 + lensStrength), angle, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        
+        // Draw accretion disk if present
+        if (hasAccretionDisk) {
+          // Inner and outer radius of disk
+          const innerRadius = eventHorizonRadius * 3;
+          const outerRadius = innerRadius * 5;
+          
+          // Draw disk with temperature gradient (inner parts hotter)
+          const diskGradient = ctx.createRadialGradient(
+            centerX, centerY, innerRadius,
+            centerX, centerY, outerRadius
+          );
+          diskGradient.addColorStop(0, 'rgba(255, 255, 200, 0.8)'); // Hot inner disk
+          diskGradient.addColorStop(0.3, 'rgba(255, 150, 50, 0.6)');
+          diskGradient.addColorStop(0.7, 'rgba(200, 50, 50, 0.4)');
+          diskGradient.addColorStop(1, 'rgba(100, 0, 50, 0.2)'); // Cooler outer disk
+          
+          ctx.fillStyle = diskGradient;
+          ctx.beginPath();
+          ctx.ellipse(centerX, centerY, outerRadius, outerRadius / 3, 0, 0, Math.PI * 2);
+          ctx.fill();
+          
+          // Cut out the inner part of disk
+          ctx.fillStyle = '#000000';
+          ctx.beginPath();
+          ctx.ellipse(centerX, centerY, innerRadius, innerRadius / 3, 0, 0, Math.PI * 2);
+          ctx.fill();
+          
+          // Add relativistic jets
+          const jetLength = outerRadius * 3;
+          const jetWidth = eventHorizonRadius;
+          
+          // Draw top jet
+          const jetGradient1 = ctx.createLinearGradient(
+            centerX, centerY - eventHorizonRadius,
+            centerX, centerY - jetLength
+          );
+          jetGradient1.addColorStop(0, 'rgba(180, 180, 255, 0.8)');
+          jetGradient1.addColorStop(1, 'rgba(100, 100, 255, 0)');
+          
+          ctx.fillStyle = jetGradient1;
+          ctx.beginPath();
+          ctx.moveTo(centerX - jetWidth/2, centerY - eventHorizonRadius);
+          ctx.lineTo(centerX - jetWidth, centerY - jetLength);
+          ctx.lineTo(centerX + jetWidth, centerY - jetLength);
+          ctx.lineTo(centerX + jetWidth/2, centerY - eventHorizonRadius);
+          ctx.closePath();
+          ctx.fill();
+          
+          // Draw bottom jet
+          const jetGradient2 = ctx.createLinearGradient(
+            centerX, centerY + eventHorizonRadius,
+            centerX, centerY + jetLength
+          );
+          jetGradient2.addColorStop(0, 'rgba(180, 180, 255, 0.8)');
+          jetGradient2.addColorStop(1, 'rgba(100, 100, 255, 0)');
+          
+          ctx.fillStyle = jetGradient2;
+          ctx.beginPath();
+          ctx.moveTo(centerX - jetWidth/2, centerY + eventHorizonRadius);
+          ctx.lineTo(centerX - jetWidth, centerY + jetLength);
+          ctx.lineTo(centerX + jetWidth, centerY + jetLength);
+          ctx.lineTo(centerX + jetWidth/2, centerY + eventHorizonRadius);
+          ctx.closePath();
+          ctx.fill();
+        }
+        
+        // Draw event horizon as perfect black circle
+        ctx.fillStyle = '#000000';
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, eventHorizonRadius, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Add light ring around event horizon (photon sphere)
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, eventHorizonRadius * 1.5, 0, Math.PI * 2);
+        ctx.stroke();
+        break;
+        
+      default:
+        // Default space background
+        ctx.fillStyle = '#000005';
+        ctx.fillRect(0, 0, this.width, this.height);
+        
+        // Simple starfield
+        for (let i = 0; i < 200; i++) {
+          const x = Math.random() * this.width;
+          const y = Math.random() * this.height;
+          const size = Math.random() * 2 + 0.5;
+          
+          ctx.fillStyle = `rgba(255, 255, 255, ${0.4 + Math.random() * 0.6})`;
+          ctx.beginPath();
+          ctx.arc(x, y, size, 0, Math.PI * 2);
+          ctx.fill();
+        }
+    }
+    
+    // Draw the name and info about the cosmic body at the top
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    ctx.fillRect(10, 10, 300, 50);
+    
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 18px Arial';
+    ctx.textAlign = 'left';
+    ctx.fillText(`Exploring: ${cosmicBody.type.charAt(0).toUpperCase() + cosmicBody.type.slice(1)}`, 20, 30);
+    
+    // Show extra info based on type
+    let infoText = '';
+    switch(cosmicBody.type) {
+      case 'star':
+        const starType = cosmicBody.cosmicProperties.starType || 'main_sequence';
+        const temp = cosmicBody.cosmicProperties.temperature || 5500;
+        infoText = `Type: ${starType.replace('_', ' ')}, Temp: ${Math.round(temp)}K`;
+        break;
+      case 'planet':
+        const planetType = cosmicBody.cosmicProperties.planetType || 'rocky';
+        infoText = `Type: ${planetType}, Habitability: ${Math.round(cosmicBody.habitability * 100)}%`;
+        break;
+      case 'galaxy':
+        const galaxyType = cosmicBody.cosmicProperties.galaxyType || 'spiral';
+        infoText = `Type: ${galaxyType}, Star density: ${Math.round((cosmicBody.cosmicProperties.starDensity || 0.5) * 100)}%`;
+        break;
+      case 'blackhole':
+        const mass = cosmicBody.cosmicProperties.stellarMass || 1000000;
+        infoText = `Mass: ${mass.toExponential(2)} solar masses`;
+        break;
+    }
+    
+    ctx.font = '14px Arial';
+    ctx.fillText(infoText, 20, 50);
+  }
+  
+  // Render information panel for the focused object
+  renderInfoPanel(cosmicBody: Plant) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    
+    // Panel at bottom of screen
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillRect(10, this.height - 90, this.width - 20, 80);
+    
+    ctx.fillStyle = 'white';
+    ctx.font = '16px Arial';
+    ctx.textAlign = 'left';
+    
+    // Different scientific information based on cosmic body type
+    switch(cosmicBody.type) {
+      case 'galaxy':
+        const galaxyType = cosmicBody.cosmicProperties.galaxyType || 'spiral';
+        const starDensity = cosmicBody.cosmicProperties.starDensity || 0.5;
+        const darkMatterRatio = cosmicBody.cosmicProperties.darkMatterRatio || 0.75;
+        
+        // Scientific information about galaxies
+        ctx.fillText('SCIENTIFIC DATA:', 20, this.height - 65);
+        ctx.font = '14px Arial';
+        ctx.fillText(`Galaxy Classification: ${galaxyType.charAt(0).toUpperCase() + galaxyType.slice(1)}`, 20, this.height - 45);
+        ctx.fillText(`Dark Matter Composition: ${Math.round(darkMatterRatio * 100)}%`, 20, this.height - 25);
+        
+        if (galaxyType === 'spiral') {
+          const spiralArms = cosmicBody.cosmicProperties.spiralArms || 4;
+          ctx.fillText(`Spiral Arm Count: ${spiralArms}`, 300, this.height - 45);
+        }
+        
+        ctx.fillText(`Stellar Population Density: ${Math.round(starDensity * 100)}%`, 300, this.height - 25);
+        
+        // Interaction instructions
+        ctx.font = 'italic 12px Arial';
+        ctx.fillText('Click on stars to explore them or the EXIT button to return to universal view', 20, this.height - 5);
+        break;
+        
+      case 'star':
+        const starType = cosmicBody.cosmicProperties.starType || 'main_sequence';
+        const temp = cosmicBody.cosmicProperties.temperature || 5500;
+        const mass = cosmicBody.cosmicProperties.stellarMass || 1;
+        const luminosity = cosmicBody.cosmicProperties.luminosity || 1;
+        
+        // Scientific information about stars
+        ctx.fillText('STELLAR PROPERTIES:', 20, this.height - 65);
+        ctx.font = '14px Arial';
+        ctx.fillText(`Spectral Classification: ${this.getSpectralClass(temp)} (${starType.replace('_', ' ')})`, 20, this.height - 45);
+        ctx.fillText(`Surface Temperature: ${Math.round(temp)}K`, 20, this.height - 25);
+        
+        ctx.fillText(`Mass: ${mass.toFixed(2)} solar masses`, 300, this.height - 45);
+        ctx.fillText(`Luminosity: ${luminosity.toFixed(2)} solar units`, 300, this.height - 25);
+        
+        // Star age approximation
+        let estimatedAge;
+        if (starType === 'main_sequence') {
+          // Main sequence lifetime roughly scales as mass^-2.5
+          estimatedAge = Math.round(10 / Math.pow(mass, 2.5) * 1000) / 1000;
+          ctx.fillText(`Estimated Age: ${estimatedAge} billion years`, 500, this.height - 45);
+        } else if (starType === 'red_giant' || starType === 'white_dwarf') {
+          ctx.fillText('Late evolutionary stage', 500, this.height - 45);
+        }
+        
+        // Show habitable zone info
+        const habZoneInner = 0.95 * Math.sqrt(luminosity);
+        const habZoneOuter = 1.37 * Math.sqrt(luminosity);
+        ctx.fillText(`Habitable Zone: ${habZoneInner.toFixed(2)}-${habZoneOuter.toFixed(2)} AU`, 500, this.height - 25);
+        
+        // Interaction instructions
+        ctx.font = 'italic 12px Arial';
+        ctx.fillText('Click on planets to explore them or the EXIT button to return', 20, this.height - 5);
+        break;
+        
+      case 'planet':
+        const planetType = cosmicBody.cosmicProperties.planetType || 'rocky';
+        const planetMass = cosmicBody.cosmicProperties.mass || 1;
+        const atmosphere = cosmicBody.cosmicProperties.atmosphere || 0;
+        const dayLength = cosmicBody.cosmicProperties.dayLength || 24;
+        const yearLength = cosmicBody.cosmicProperties.yearLength || 365;
+        
+        // Scientific information about planets
+        ctx.fillText('PLANETARY DATA:', 20, this.height - 65);
+        ctx.font = '14px Arial';
+        ctx.fillText(`Classification: ${planetType.charAt(0).toUpperCase() + planetType.slice(1)}`, 20, this.height - 45);
+        ctx.fillText(`Mass: ${mass.toFixed(2)} Earth masses`, 20, this.height - 25);
+        
+        ctx.fillText(`Atmosphere: ${Math.round(atmosphere * 100)}%`, 300, this.height - 45);
+        ctx.fillText(`Rotation: ${Math.round(dayLength)} hours/day`, 300, this.height - 25);
+        
+        ctx.fillText(`Orbital Period: ${Math.round(yearLength)} days/year`, 500, this.height - 45);
+        
+        // Life-related info if applicable
+        if (cosmicBody.habitability > 0) {
+          ctx.fillText(`Habitability Index: ${Math.round(cosmicBody.habitability * 100)}%`, 500, this.height - 25);
+          
+          if (cosmicBody.lifeComplexity > 0) {
+            ctx.fillText(`Life Complexity: ${Math.round(cosmicBody.lifeComplexity * 100)}%`, 700, this.height - 45);
+            
+            // Describe biosphere
+            let biosphereDesc = 'Microbial life only';
+            if (cosmicBody.lifeComplexity > 0.3) biosphereDesc = 'Simple multicellular organisms';
+            if (cosmicBody.lifeComplexity > 0.5) biosphereDesc = 'Complex land-based ecosystems';
+            if (cosmicBody.lifeComplexity > 0.7) biosphereDesc = 'Advanced life forms';
+            if (cosmicBody.lifeComplexity > 0.9) biosphereDesc = 'Intelligent species present';
+            
+            ctx.fillText(biosphereDesc, 700, this.height - 25);
+          }
+        }
+        
+        // Interaction instructions
+        ctx.font = 'italic 12px Arial';
+        ctx.fillText('Click the EXIT button to return to star system view', 20, this.height - 5);
+        break;
+        
+      case 'blackhole':
+        const bhMass = cosmicBody.cosmicProperties.stellarMass || 1000000;
+        const hasDisk = cosmicBody.cosmicProperties.accretionDisk || false;
+        const eventHorizon = cosmicBody.cosmicProperties.eventHorizonRadius || 50;
+        
+        // Convert to Schwarzschild radius
+        const schwarzschildRadius = (2.95 * bhMass / 1000000).toFixed(2); // km, scaled for display
+        
+        // Scientific information about black holes
+        ctx.fillText('BLACK HOLE PHYSICS:', 20, this.height - 65);
+        ctx.font = '14px Arial';
+        ctx.fillText(`Mass: ${bhMass.toExponential(2)} solar masses`, 20, this.height - 45);
+        ctx.fillText(`Event Horizon (Schwarzschild radius): ${schwarzschildRadius} km`, 20, this.height - 25);
+        
+        ctx.fillText(`Type: ${bhMass > 100000 ? 'Supermassive' : 'Stellar Mass'} Black Hole`, 400, this.height - 45);
+        ctx.fillText(`Accretion Disk: ${hasDisk ? 'Present' : 'Absent'}`, 400, this.height - 25);
+        
+        // Hawking radiation
+        const hawkingTemp = 6.169e-8 / bhMass; // K, very rough approximation
+        ctx.fillText(`Hawking Temperature: ${hawkingTemp.toExponential(2)} K`, 700, this.height - 45);
+        
+        // Interaction instructions
+        ctx.font = 'italic 12px Arial';
+        ctx.fillText('Click the EXIT button to return. Warning: Nothing escapes the event horizon!', 20, this.height - 5);
+        break;
+    }
+  }
+  
+  // Helper function to get spectral class based on temperature
+  private getSpectralClass(temperature: number): string {
+    if (temperature > 30000) return 'O';
+    if (temperature > 10000) return 'B';
+    if (temperature > 7500) return 'A';
+    if (temperature > 6000) return 'F';
+    if (temperature > 5200) return 'G'; // Like our Sun
+    if (temperature > 3700) return 'K';
+    return 'M';
+  }
+
+  // Render a special background for cosmic body interiors
+  renderInteriorBackground(cosmicBody: Plant) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    
+    switch(cosmicBody.type) {
+      case 'galaxy':
+        // For galaxies, render a starfield with galaxy structure
+        ctx.fillStyle = '#000005';
+        ctx.fillRect(0, 0, this.width, this.height);
+        
+        // Add some nebula-like colors based on galaxy type
+        const galaxyType = cosmicBody.cosmicProperties.galaxyType || 'spiral';
+        
+        if (galaxyType === 'spiral') {
+          // Spiral galaxies have visible arms and structure
+          const centerX = this.width / 2;
+          const centerY = this.height / 2;
+          const spiralArms = cosmicBody.cosmicProperties.spiralArms || 4;
+          
+          // Draw subtle spiral arm structure
+          for (let arm = 0; arm < spiralArms; arm++) {
+            const baseAngle = (arm / spiralArms) * Math.PI * 2;
+            
+            ctx.beginPath();
+            for (let r = 0; r < 200; r += 5) {
+              const angle = baseAngle + (r * 0.015);
+              const x = centerX + Math.cos(angle) * r;
+              const y = centerY + Math.sin(angle) * r;
+              
+              if (r === 0) {
+                ctx.moveTo(x, y);
+              } else {
+                ctx.lineTo(x, y);
+              }
+            }
+            
+            // Create spiral arm glow
+            const gradient = ctx.createLinearGradient(centerX, centerY, centerX + 200, centerY);
+            gradient.addColorStop(0, 'rgba(255, 255, 255, 0.05)');
+            gradient.addColorStop(0.3, 'rgba(120, 150, 255, 0.03)');
+            gradient.addColorStop(0.6, 'rgba(180, 180, 255, 0.02)');
+            gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+            
+            ctx.strokeStyle = gradient;
+            ctx.lineWidth = 30;
+            ctx.stroke();
+          }
+        } else if (galaxyType === 'elliptical') {
+          // Elliptical galaxies have a central concentration of stars
+          const centerX = this.width / 2;
+          const centerY = this.height / 2;
+          
+          // Draw elliptical halo
+          const gradient = ctx.createRadialGradient(
+            centerX, centerY, 10,
+            centerX, centerY, 250
+          );
+          gradient.addColorStop(0, 'rgba(255, 255, 200, 0.05)');
+          gradient.addColorStop(0.3, 'rgba(200, 200, 150, 0.03)');
+          gradient.addColorStop(0.7, 'rgba(150, 150, 100, 0.01)');
+          gradient.addColorStop(1, 'rgba(100, 100, 50, 0)');
+          
+          ctx.fillStyle = gradient;
+          ctx.beginPath();
+          ctx.ellipse(centerX, centerY, 250, 180, 0, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          // Irregular galaxies have chaotic structure
+          const centerX = this.width / 2;
+          const centerY = this.height / 2;
+          
+          // Draw random nebula-like patches
+          for (let i = 0; i < 5; i++) {
+            const x = centerX + (Math.random() * 300 - 150);
+            const y = centerY + (Math.random() * 300 - 150);
+            const radius = 30 + Math.random() * 70;
+            
+            const gradient = ctx.createRadialGradient(
+              x, y, 5,
+              x, y, radius
+            );
+            
+            // Random colors for irregular galaxy
+            const hue = Math.random() * 60 + 200; // Blues/purples
+            gradient.addColorStop(0, `hsla(${hue}, 80%, 70%, 0.05)`);
+            gradient.addColorStop(0.5, `hsla(${hue}, 60%, 40%, 0.03)`);
+            gradient.addColorStop(1, `hsla(${hue}, 40%, 20%, 0)`);
+            
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.ellipse(x, y, radius, radius * (0.5 + Math.random() * 0.5), Math.random() * Math.PI, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+        
+        // Add stars
+        const starDensity = cosmicBody.cosmicProperties.starDensity || 0.5;
+        const starCount = Math.floor(starDensity * 500);
+        
+        for (let i = 0; i < starCount; i++) {
+          const x = Math.random() * this.width;
+          const y = Math.random() * this.height;
+          const size = Math.random() * 2 + 0.5;
+          
+          // Star brightness based on position (brighter near center)
+          const distFromCenter = Math.sqrt(
+            Math.pow((x - this.width/2) / (this.width/2), 2) + 
+            Math.pow((y - this.height/2) / (this.height/2), 2)
+          );
+          
+          const brightness = 0.5 + (1 - Math.min(1, distFromCenter)) * 0.5;
+          
+          ctx.fillStyle = `rgba(255, 255, 255, ${brightness})`;
+          ctx.beginPath();
+          ctx.arc(x, y, size, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        break;
+        
+      case 'star':
+        // For stars, render a glowing stellar atmosphere
+        const starType = cosmicBody.cosmicProperties.starType || 'main_sequence';
+        const temperature = cosmicBody.cosmicProperties.temperature || 5500;
+        
+        // Map temperature to color (using blackbody radiation approximation)
+        // Stefan-Boltzmann law and Wien's displacement law
+        let starColor;
+        if (temperature > 30000) starColor = '#AABFFF'; // Very hot blue
+        else if (temperature > 20000) starColor = '#CAD7FF'; // Blue
+        else if (temperature > 10000) starColor = '#F8F7FF'; // Blue-white
+        else if (temperature > 7500) starColor = '#FFFFFF'; // White
+        else if (temperature > 6000) starColor = '#FFF9F5'; // Yellow-white
+        else if (temperature > 5000) starColor = '#FFF5E9'; // Yellow
+        else if (temperature > 3500) starColor = '#FFEBD1'; // Orange
+        else starColor = '#FFD2A1'; // Red
+        
+        // Draw the star's atmosphere
+        const starCenterX = this.width / 2;
+        const starCenterY = this.height / 2;
+        
+        // Stellar atmosphere
+        const starGradient = ctx.createRadialGradient(
+          starCenterX, starCenterY, 10,
+          starCenterX, starCenterY, this.width / 1.5
+        );
+        starGradient.addColorStop(0, starColor);
+        starGradient.addColorStop(0.2, starColor.replace('FF', 'CC')); // Reduce alpha
+        starGradient.addColorStop(0.4, starColor.replace('FF', '66')); // Reduce more
+        starGradient.addColorStop(0.6, starColor.replace('FF', '33')); 
+        starGradient.addColorStop(1, '#000000');
+        
+        ctx.fillStyle = starGradient;
+        ctx.fillRect(0, 0, this.width, this.height);
+        
+        // Stellar surface features
+        if (starType === 'red_giant' || starType === 'red_dwarf') {
+          // Convection cells on cooler stars
+          for (let i = 0; i < 20; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const distance = Math.random() * 100;
+            const x = starCenterX + Math.cos(angle) * distance;
+            const y = starCenterY + Math.sin(angle) * distance;
+            const size = 10 + Math.random() * 30;
+            
+            ctx.fillStyle = 'rgba(255, 220, 180, 0.1)';
+            ctx.beginPath();
+            ctx.arc(x, y, size, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        } else if (starType === 'main_sequence' || starType === 'yellow_dwarf') {
+          // Sunspots and flares
+          for (let i = 0; i < 8; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const distance = 30 + Math.random() * 70;
+            const x = starCenterX + Math.cos(angle) * distance;
+            const y = starCenterY + Math.sin(angle) * distance;
+            const size = 5 + Math.random() * 15;
+            
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+            ctx.beginPath();
+            ctx.arc(x, y, size, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          
+          // Solar flares
+          for (let i = 0; i < 3; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const baseX = starCenterX + Math.cos(angle) * 120;
+            const baseY = starCenterY + Math.sin(angle) * 120;
+            
+            ctx.beginPath();
+            ctx.moveTo(baseX, baseY);
+            
+            // Create a curved flare
+            const controlX1 = baseX + Math.cos(angle) * 50 - Math.sin(angle) * 50;
+            const controlY1 = baseY + Math.sin(angle) * 50 + Math.cos(angle) * 50;
+            const controlX2 = baseX + Math.cos(angle) * 100 + Math.sin(angle) * 30;
+            const controlY2 = baseY + Math.sin(angle) * 100 - Math.cos(angle) * 30;
+            const endX = baseX + Math.cos(angle) * 150;
+            const endY = baseY + Math.sin(angle) * 150;
+            
+            ctx.bezierCurveTo(controlX1, controlY1, controlX2, controlY2, endX, endY);
+            
+            const flareGradient = ctx.createLinearGradient(baseX, baseY, endX, endY);
+            flareGradient.addColorStop(0, 'rgba(255, 255, 220, 0.7)');
+            flareGradient.addColorStop(1, 'rgba(255, 200, 100, 0)');
+            
+            ctx.strokeStyle = flareGradient;
+            ctx.lineWidth = 3 + Math.random() * 5;
+            ctx.stroke();
+          }
+        } else if (starType === 'blue_giant') {
+          // Intense radiation
+          for (let i = 0; i < 30; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const length = 150 + Math.random() * 150;
+            const baseX = starCenterX + Math.cos(angle) * 120;
+            const baseY = starCenterY + Math.sin(angle) * 120;
+            const endX = baseX + Math.cos(angle) * length;
+            const endY = baseY + Math.sin(angle) * length;
+            
+            const radGradient = ctx.createLinearGradient(baseX, baseY, endX, endY);
+            radGradient.addColorStop(0, 'rgba(180, 220, 255, 0.5)');
+            radGradient.addColorStop(1, 'rgba(100, 150, 255, 0)');
+            
+            ctx.strokeStyle = radGradient;
+            ctx.lineWidth = 1 + Math.random() * 3;
+            ctx.beginPath();
+            ctx.moveTo(baseX, baseY);
+            ctx.lineTo(endX, endY);
+            ctx.stroke();
+          }
+        }
+        break;
+        
+      case 'planet':
+        // For planets, render a planetary surface
+        const planetType = cosmicBody.cosmicProperties.planetType || 'rocky';
+        const hasAtmosphere = (cosmicBody.cosmicProperties.atmosphere || 0) > 0.1;
+        
+        // Draw sky color based on atmosphere
+        let skyColor = '#000005'; // Default: space
+        if (hasAtmosphere) {
+          if (planetType === 'rocky' && cosmicBody.habitability > 0.3) {
+            // Earth-like atmosphere
+            skyColor = '#87CEEB'; // Sky blue
+          } else if (planetType === 'gas_giant') {
+            // Gas giant atmosphere
+            skyColor = '#A78F6E'; // Brownish
+          } else {
+            // Other atmospheres
+            skyColor = '#B0C4DE'; // Light steel blue
+          }
+        }
+        
+        // Fill background with sky/space
+        ctx.fillStyle = skyColor;
+        ctx.fillRect(0, 0, this.width, this.height);
+        
+        // Draw surface features based on planet type
+        if (planetType === 'rocky') {
+          // Mountains and terrain
+          for (let i = 0; i < 10; i++) {
+            const x = Math.random() * this.width;
+            const height = 100 + Math.random() * 80;
+            
+            ctx.fillStyle = cosmicBody.habitability > 0.3 ? '#8B4513' : '#696969'; // Brown or gray
+            ctx.beginPath();
+            ctx.moveTo(x - 100, this.height);
+            ctx.lineTo(x, this.height - height);
+            ctx.lineTo(x + 100, this.height);
+            ctx.closePath();
+            ctx.fill();
+          }
+          
+          // Water features for habitable planets
+          if (cosmicBody.habitability > 0.3 && cosmicBody.cosmicProperties.hydrosphere && 
+              cosmicBody.cosmicProperties.hydrosphere > 0.2) {
+            ctx.fillStyle = '#1E90FF'; // Dodger blue
+            ctx.fillRect(0, this.height - 80, this.width, 80);
+          }
+          
+          // Add vegetation for planets with life
+          if (cosmicBody.lifeComplexity > 0) {
+            const treeDensity = cosmicBody.lifeComplexity * 20; // More complex life = more trees
+            
+            for (let i = 0; i < treeDensity; i++) {
+              const x = Math.random() * this.width;
+              const y = this.height - 80 - Math.random() * 50;
+              
+              // Draw tree
+              ctx.fillStyle = '#006400'; // Dark green
+              ctx.beginPath();
+              ctx.moveTo(x, y);
+              ctx.lineTo(x - 15, y + 30);
+              ctx.lineTo(x + 15, y + 30);
+              ctx.closePath();
+              ctx.fill();
+              
+              ctx.fillStyle = '#8B4513'; // Brown
+              ctx.fillRect(x - 2, y + 30, 4, 10);
+            }
+            
+            // Advanced life adds structures
+            if (cosmicBody.lifeComplexity > 0.5) {
+              // Simple structures (like huts or buildings)
+              for (let i = 0; i < 3; i++) {
+                const x = 100 + i * 150;
+                const y = this.height - 100;
+                
+                ctx.fillStyle = '#A9A9A9'; // Dark gray
+                ctx.fillRect(x, y, 30, 20);
+                
+                // Roof
+                ctx.fillStyle = '#800000'; // Maroon
+                ctx.beginPath();
+                ctx.moveTo(x - 5, y);
+                ctx.lineTo(x + 15, y - 15);
+                ctx.lineTo(x + 35, y);
+                ctx.closePath();
+                ctx.fill();
+              }
+            }
+          }
+        } else if (planetType === 'gas_giant') {
+          // Cloud bands
+          const bandCount = 7;
+          const bandHeight = this.height / bandCount;
+          
+          for (let i = 0; i < bandCount; i++) {
+            // Alternate band colors
+            const baseHue = Math.random() < 0.5 ? 30 : 40; // Yellowish/brownish
+            const hue = baseHue + (i * 5);
+            const lightness = 50 + (i % 2) * 10;
+            
+            ctx.fillStyle = `hsl(${hue}, 80%, ${lightness}%)`;
+            ctx.fillRect(0, i * bandHeight, this.width, bandHeight);
+            
+            // Add swirls and storms
+            if (i % 2 === 0) {
+              for (let j = 0; j < 3; j++) {
+                const x = Math.random() * this.width;
+                const y = i * bandHeight + bandHeight / 2;
+                const radius = 10 + Math.random() * 30;
+                
+                const bandGradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
+                bandGradient.addColorStop(0, `hsla(${hue + 10}, 90%, ${lightness + 10}%, 0.8)`);
+                bandGradient.addColorStop(1, `hsla(${hue}, 80%, ${lightness}%, 0)`);
+                
+                ctx.fillStyle = bandGradient;
+                ctx.beginPath();
+                ctx.arc(x, y, radius, 0, Math.PI * 2);
+                ctx.fill();
+              }
+            }
+          }
+          
+          // Great spot feature (like Jupiter's Great Red Spot)
+          const spotX = this.width / 3;
+          const spotY = this.height / 2;
+          const spotRadius = 40 + Math.random() * 20;
+          
+          const spotGradient = ctx.createRadialGradient(spotX, spotY, 0, spotX, spotY, spotRadius);
+          spotGradient.addColorStop(0, 'rgba(255, 100, 100, 0.8)');
+          spotGradient.addColorStop(1, 'rgba(200, 60, 60, 0)');
+          
+          ctx.fillStyle = spotGradient;
+          ctx.beginPath();
+          ctx.ellipse(spotX, spotY, spotRadius, spotRadius / 2, Math.PI / 4, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        break;
+        
+      case 'blackhole':
+        // For black holes, render an accretion disk and event horizon
+        const bhCenterX = this.width / 2;
+        const bhCenterY = this.height / 2;
+        const eventHorizonRadius = cosmicBody.cosmicProperties.eventHorizonRadius || 50;
+        const hasAccretionDisk = cosmicBody.cosmicProperties.accretionDisk || false;
+        
+        // Black background
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, this.width, this.height);
+        
+        // Draw distorted space around black hole (gravitational lensing effect)
+        for (let i = 0; i < 200; i++) {
+          const distance = 100 + Math.random() * 300;
+          const angle = Math.random() * Math.PI * 2;
+          
+          // Stars get distorted around black hole
+          let x = bhCenterX + Math.cos(angle) * distance;
+          let y = bhCenterY + Math.sin(angle) * distance;
+          
+          // Apply gravitational lensing effect
+          const distFromCenter = Math.sqrt(Math.pow(x - bhCenterX, 2) + Math.pow(y - bhCenterY, 2));
+          const lensStrength = 50 / Math.max(50, distFromCenter);
+          
+          // Distort position based on lensing
+          const dx = x - bhCenterX;
+          const dy = y - bhCenterY;
+          const lensedDist = distance * (1 - lensStrength * 0.5);
+          x = bhCenterX + Math.cos(angle) * lensedDist;
+          y = bhCenterY + Math.sin(angle) * lensedDist;
+          
+          // Draw distorted star
+          const size = 1 + Math.random();
+          ctx.fillStyle = '#FFFFFF';
+          ctx.beginPath();
+          ctx.ellipse(x, y, size, size * (1 + lensStrength), angle, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        
+        // Draw accretion disk if present
+        if (hasAccretionDisk) {
+          // Inner and outer radius of disk
+          const innerRadius = eventHorizonRadius * 3;
+          const outerRadius = innerRadius * 5;
+          
+          // Draw disk with temperature gradient (inner parts hotter)
+          const diskGradient = ctx.createRadialGradient(
+            bhCenterX, bhCenterY, innerRadius,
+            bhCenterX, bhCenterY, outerRadius
+          );
+          diskGradient.addColorStop(0, 'rgba(255, 255, 200, 0.8)'); // Hot inner disk
+          diskGradient.addColorStop(0.3, 'rgba(255, 150, 50, 0.6)');
+          diskGradient.addColorStop(0.7, 'rgba(200, 50, 50, 0.4)');
+          diskGradient.addColorStop(1, 'rgba(100, 0, 50, 0.2)'); // Cooler outer disk
+          
+          ctx.fillStyle = diskGradient;
+          ctx.beginPath();
+          ctx.ellipse(bhCenterX, bhCenterY, outerRadius, outerRadius / 3, 0, 0, Math.PI * 2);
+          ctx.fill();
+          
+          // Cut out the inner part of disk
+          ctx.fillStyle = '#000000';
+          ctx.beginPath();
+          ctx.ellipse(bhCenterX, bhCenterY, innerRadius, innerRadius / 3, 0, 0, Math.PI * 2);
+          ctx.fill();
+          
+          // Add relativistic jets
+          const jetLength = outerRadius * 3;
+          const jetWidth = eventHorizonRadius;
+          
+          // Draw top jet
+          const jetGradient1 = ctx.createLinearGradient(
+            bhCenterX, bhCenterY - eventHorizonRadius,
+            bhCenterX, bhCenterY - jetLength
+          );
+          jetGradient1.addColorStop(0, 'rgba(180, 180, 255, 0.8)');
+          jetGradient1.addColorStop(1, 'rgba(100, 100, 255, 0)');
+          
+          ctx.fillStyle = jetGradient1;
+          ctx.beginPath();
+          ctx.moveTo(bhCenterX - jetWidth/2, bhCenterY - eventHorizonRadius);
+          ctx.lineTo(bhCenterX - jetWidth, bhCenterY - jetLength);
+          ctx.lineTo(bhCenterX + jetWidth, bhCenterY - jetLength);
+          ctx.lineTo(bhCenterX + jetWidth/2, bhCenterY - eventHorizonRadius);
+          ctx.closePath();
+          ctx.fill();
+          
+          // Draw bottom jet
+          const jetGradient2 = ctx.createLinearGradient(
+            bhCenterX, bhCenterY + eventHorizonRadius,
+            bhCenterX, bhCenterY + jetLength
+          );
+          jetGradient2.addColorStop(0, 'rgba(180, 180, 255, 0.8)');
+          jetGradient2.addColorStop(1, 'rgba(100, 100, 255, 0)');
+          
+          ctx.fillStyle = jetGradient2;
+          ctx.beginPath();
+          ctx.moveTo(bhCenterX - jetWidth/2, bhCenterY + eventHorizonRadius);
+          ctx.lineTo(bhCenterX - jetWidth, bhCenterY + jetLength);
+          ctx.lineTo(bhCenterX + jetWidth, bhCenterY + jetLength);
+          ctx.lineTo(bhCenterX + jetWidth/2, bhCenterY + eventHorizonRadius);
+          ctx.closePath();
+          ctx.fill();
+        }
+        
+        // Draw event horizon as perfect black circle
+        ctx.fillStyle = '#000000';
+        ctx.beginPath();
+        ctx.arc(bhCenterX, bhCenterY, eventHorizonRadius, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Add light ring around event horizon (photon sphere)
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(bhCenterX, bhCenterY, eventHorizonRadius * 1.5, 0, Math.PI * 2);
+        ctx.stroke();
+        break;
+        
+      default:
+        // Default space background
+        ctx.fillStyle = '#000005';
+        ctx.fillRect(0, 0, this.width, this.height);
+        
+        // Simple starfield
+        for (let i = 0; i < 200; i++) {
+          const x = Math.random() * this.width;
+          const y = Math.random() * this.height;
+          const size = Math.random() * 2 + 0.5;
+          
+          ctx.fillStyle = `rgba(255, 255, 255, ${0.4 + Math.random() * 0.6})`;
+          ctx.beginPath();
+          ctx.arc(x, y, size, 0, Math.PI * 2);
+          ctx.fill();
+        }
+    }
+    
+    // Draw the name and info about the cosmic body at the top
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    ctx.fillRect(10, 10, 300, 50);
+    
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 18px Arial';
+    ctx.textAlign = 'left';
+    ctx.fillText(`Exploring: ${cosmicBody.type.charAt(0).toUpperCase() + cosmicBody.type.slice(1)}`, 20, 30);
+    
+    // Show extra info based on type
+    let infoText = '';
+    switch(cosmicBody.type) {
+      case 'star':
+        const infoStarType = cosmicBody.cosmicProperties.starType || 'main_sequence';
+        const infoTemp = cosmicBody.cosmicProperties.temperature || 5500;
+        infoText = `Type: ${infoStarType.replace('_', ' ')}, Temp: ${Math.round(infoTemp)}K`;
+        break;
+      case 'planet':
+        const infoPlanetType = cosmicBody.cosmicProperties.planetType || 'rocky';
+        infoText = `Type: ${infoPlanetType}, Habitability: ${Math.round(cosmicBody.habitability * 100)}%`;
+        break;
+      case 'galaxy':
+        const infoGalaxyType = cosmicBody.cosmicProperties.galaxyType || 'spiral';
+        infoText = `Type: ${infoGalaxyType}, Star density: ${Math.round((cosmicBody.cosmicProperties.starDensity || 0.5) * 100)}%`;
+        break;
+      case 'blackhole':
+        const infoMass = cosmicBody.cosmicProperties.stellarMass || 1000000;
+        infoText = `Mass: ${infoMass.toExponential(2)} solar masses`;
+        break;
+    }
+    
+    ctx.font = '14px Arial';
+    ctx.fillText(infoText, 20, 50);
+  }
+  
+  // Render information panel for the focused object
+  renderInfoPanel(cosmicBody: Plant) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    
+    // Panel at bottom of screen
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillRect(10, this.height - 90, this.width - 20, 80);
+    
+    ctx.fillStyle = 'white';
+    ctx.font = '16px Arial';
+    ctx.textAlign = 'left';
+    
+    // Different scientific information based on cosmic body type
+    switch(cosmicBody.type) {
+      case 'galaxy':
+        const galaxyType = cosmicBody.cosmicProperties.galaxyType || 'spiral';
+        const starDensity = cosmicBody.cosmicProperties.starDensity || 0.5;
+        const darkMatterRatio = cosmicBody.cosmicProperties.darkMatterRatio || 0.75;
+        
+        // Scientific information about galaxies
+        ctx.fillText('SCIENTIFIC DATA:', 20, this.height - 65);
+        ctx.font = '14px Arial';
+        ctx.fillText(`Galaxy Classification: ${galaxyType.charAt(0).toUpperCase() + galaxyType.slice(1)}`, 20, this.height - 45);
+        ctx.fillText(`Dark Matter Composition: ${Math.round(darkMatterRatio * 100)}%`, 20, this.height - 25);
+        
+        if (galaxyType === 'spiral') {
+          const spiralArms = cosmicBody.cosmicProperties.spiralArms || 4;
+          ctx.fillText(`Spiral Arm Count: ${spiralArms}`, 300, this.height - 45);
+        }
+        
+        ctx.fillText(`Stellar Population Density: ${Math.round(starDensity * 100)}%`, 300, this.height - 25);
+        
+        // Interaction instructions
+        ctx.font = 'italic 12px Arial';
+        ctx.fillText('Click on stars to explore them or the EXIT button to return to universal view', 20, this.height - 5);
+        break;
+        
+      case 'star':
+        const starType = cosmicBody.cosmicProperties.starType || 'main_sequence';
+        const temp = cosmicBody.cosmicProperties.temperature || 5500;
+        const stellarMass = cosmicBody.cosmicProperties.stellarMass || 1;
+        const luminosity = cosmicBody.cosmicProperties.luminosity || 1;
+        
+        // Scientific information about stars
+        ctx.fillText('STELLAR PROPERTIES:', 20, this.height - 65);
+        ctx.font = '14px Arial';
+        ctx.fillText(`Spectral Classification: ${this.getSpectralClass(temp)} (${starType.replace('_', ' ')})`, 20, this.height - 45);
+        ctx.fillText(`Surface Temperature: ${Math.round(temp)}K`, 20, this.height - 25);
+        
+        ctx.fillText(`Mass: ${stellarMass.toFixed(2)} solar masses`, 300, this.height - 45);
+        ctx.fillText(`Luminosity: ${luminosity.toFixed(2)} solar units`, 300, this.height - 25);
+        
+        // Star age approximation
+        let estimatedAge;
+        if (starType === 'main_sequence') {
+          // Main sequence lifetime roughly scales as mass^-2.5
+          estimatedAge = Math.round(10 / Math.pow(stellarMass, 2.5) * 1000) / 1000;
+          ctx.fillText(`Estimated Age: ${estimatedAge} billion years`, 500, this.height - 45);
+        } else if (starType === 'red_giant' || starType === 'white_dwarf') {
+          ctx.fillText('Late evolutionary stage', 500, this.height - 45);
+        }
+        
+        // Show habitable zone info
+        const habZoneInner = 0.95 * Math.sqrt(luminosity);
+        const habZoneOuter = 1.37 * Math.sqrt(luminosity);
+        ctx.fillText(`Habitable Zone: ${habZoneInner.toFixed(2)}-${habZoneOuter.toFixed(2)} AU`, 500, this.height - 25);
+        
+        // Interaction instructions
+        ctx.font = 'italic 12px Arial';
+        ctx.fillText('Click on planets to explore them or the EXIT button to return', 20, this.height - 5);
+        break;
+        
+      case 'planet':
+        const planetType = cosmicBody.cosmicProperties.planetType || 'rocky';
+        const planetMass = cosmicBody.cosmicProperties.mass || 1;
+        const atmosphere = cosmicBody.cosmicProperties.atmosphere || 0;
+        const dayLength = cosmicBody.cosmicProperties.dayLength || 24;
+        const yearLength = cosmicBody.cosmicProperties.yearLength || 365;
+        
+        // Scientific information about planets
+        ctx.fillText('PLANETARY DATA:', 20, this.height - 65);
+        ctx.font = '14px Arial';
+        ctx.fillText(`Classification: ${planetType.charAt(0).toUpperCase() + planetType.slice(1)}`, 20, this.height - 45);
+        ctx.fillText(`Mass: ${planetMass.toFixed(2)} Earth masses`, 20, this.height - 25);
+        
+        ctx.fillText(`Atmosphere: ${Math.round(atmosphere * 100)}%`, 300, this.height - 45);
+        ctx.fillText(`Rotation: ${Math.round(dayLength)} hours/day`, 300, this.height - 25);
+        
+        ctx.fillText(`Orbital Period: ${Math.round(yearLength)} days/year`, 500, this.height - 45);
+        
+        // Life-related info if applicable
+        if (cosmicBody.habitability > 0) {
+          ctx.fillText(`Habitability Index: ${Math.round(cosmicBody.habitability * 100)}%`, 500, this.height - 25);
+          
+          if (cosmicBody.lifeComplexity > 0) {
+            ctx.fillText(`Life Complexity: ${Math.round(cosmicBody.lifeComplexity * 100)}%`, 700, this.height - 45);
+            
+            // Describe biosphere
+            let biosphereDesc = 'Microbial life only';
+            if (cosmicBody.lifeComplexity > 0.3) biosphereDesc = 'Simple multicellular organisms';
+            if (cosmicBody.lifeComplexity > 0.5) biosphereDesc = 'Complex land-based ecosystems';
+            if (cosmicBody.lifeComplexity > 0.7) biosphereDesc = 'Advanced life forms';
+            if (cosmicBody.lifeComplexity > 0.9) biosphereDesc = 'Intelligent species present';
+            
+            ctx.fillText(biosphereDesc, 700, this.height - 25);
+          }
+        }
+        
+        // Interaction instructions
+        ctx.font = 'italic 12px Arial';
+        ctx.fillText('Click the EXIT button to return to star system view', 20, this.height - 5);
+        break;
+        
+      case 'blackhole':
+        const bhMass = cosmicBody.cosmicProperties.stellarMass || 1000000;
+        const hasDisk = cosmicBody.cosmicProperties.accretionDisk || false;
+        const eventHorizon = cosmicBody.cosmicProperties.eventHorizonRadius || 50;
+        
+        // Convert to Schwarzschild radius
+        const schwarzschildRadius = (2.95 * bhMass / 1000000).toFixed(2); // km, scaled for display
+        
+        // Scientific information about black holes
+        ctx.fillText('BLACK HOLE PHYSICS:', 20, this.height - 65);
+        ctx.font = '14px Arial';
+        ctx.fillText(`Mass: ${bhMass.toExponential(2)} solar masses`, 20, this.height - 45);
+        ctx.fillText(`Event Horizon (Schwarzschild radius): ${schwarzschildRadius} km`, 20, this.height - 25);
+        
+        ctx.fillText(`Type: ${bhMass > 100000 ? 'Supermassive' : 'Stellar Mass'} Black Hole`, 400, this.height - 45);
+        ctx.fillText(`Accretion Disk: ${hasDisk ? 'Present' : 'Absent'}`, 400, this.height - 25);
+        
+        // Hawking radiation
+        const hawkingTemp = 6.169e-8 / bhMass; // K, very rough approximation
+        ctx.fillText(`Hawking Temperature: ${hawkingTemp.toExponential(2)} K`, 700, this.height - 45);
+        
+        // Interaction instructions
+        ctx.font = 'italic 12px Arial';
+        ctx.fillText('Click the EXIT button to return. Warning: Nothing escapes the event horizon!', 20, this.height - 5);
+        break;
+    }
+  }
+  
+  clear() {
+    // Get rendering context
+    const ctx = this.ctx;
+    if (!ctx) return;
+    
+    ctx.clearRect(0, 0, this.width, this.height);
+    
+    // When focused on a specific cosmic body, render its interior view
+    if (this.focusedObject) {
+      // Draw a special background for this cosmic body's interior
+      this.renderInteriorBackground(this.focusedObject);
+      
+      // Draw "Exit" button in top-right corner
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+      ctx.fillRect(this.width - 80, 10, 70, 30);
+      ctx.fillStyle = 'white';
+      ctx.font = '14px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('EXIT', this.width - 45, 30);
+      
+      // Draw info panel with cosmic body details
+      this.renderInfoPanel(this.focusedObject);
+      
+      return; // Skip regular background rendering
+    }
+    
+    // Standard background rendering based on universe phase
+    if (this.universePhase <= 0) {
+      // The Void - Almost complete emptiness
+      this.renderVoidBackground();
+    } 
+    else if (this.universePhase === 1) {
+      // Quantum Foam phase - subtle quantum fluctuations
+      this.renderQuantumFoamBackground();
+    }
+    else if (this.universePhase === 2) {
+      // Big Bang - explosive energy
+      this.renderBigBangBackground();
+    }
+    else if (this.universePhase <= 4) {
+      // Early universe - hot plasma and particle formation
+      this.renderEarlyUniverseBackground();
+    }
+    else if (this.universePhase <= 6) {
+      // Star formation and cosmic structure
+      this.renderCosmicStructureBackground();
+    }
+    else {
+      // Later phases - complex universe
+      this.renderMatureUniverseBackground();
+    }
+  }
+  
+  private renderVoidBackground() {
+    // The Void - almost complete black with subtle quantum fluctuations
+    const gradient = this.ctx.createLinearGradient(0, 0, 0, this.height);
+    gradient.addColorStop(0, '#020209'); // Deep void at top
+    gradient.addColorStop(0.5, '#010106'); // Nearly black in the middle
+    gradient.addColorStop(1, '#000003'); // Almost pure black at bottom
+    
+    this.ctx.fillStyle = gradient;
+    this.ctx.fillRect(0, 0, this.width, this.height);
+    
+    // Subtle quantum fluctuations - almost invisible
+    for (let i = 0; i < 20; i++) {
+      const x = Math.random() * this.width;
+      const y = Math.random() * this.height;
+      const size = Math.random() * 20 + 5;
+      
+      // Create quantum fluctuation
+      const flickerIntensity = Math.sin(Date.now() * 0.01 + i) * 0.015 + 0.015;
+      
+      const fluctGradient = this.ctx.createRadialGradient(x, y, 0, x, y, size);
+      fluctGradient.addColorStop(0, `rgba(30, 10, 60, ${flickerIntensity})`);
+      fluctGradient.addColorStop(0.5, `rgba(20, 5, 40, ${flickerIntensity/2})`);
+      fluctGradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      
+      this.ctx.fillStyle = fluctGradient;
+      this.ctx.beginPath();
+      this.ctx.arc(x, y, size, 0, Math.PI * 2);
+      this.ctx.fill();
+    }
+  }
+  
+  private renderQuantumFoamBackground() {
+    // Quantum Foam - increasing fluctuations and energy
+    const gradient = this.ctx.createLinearGradient(0, 0, 0, this.height);
+    gradient.addColorStop(0, '#05051A'); // Deep blue-purple at top 
+    gradient.addColorStop(0.5, '#030310'); // Deep blue-black in the middle
+    gradient.addColorStop(1, '#020209'); // Very dark at bottom
+    
+    this.ctx.fillStyle = gradient;
+    this.ctx.fillRect(0, 0, this.width, this.height);
+    
+    // Quantum foam visualization - more noticeable fluctuations
+    for (let i = 0; i < 40; i++) {
+      const x = (Math.sin(i * 123.45 + Date.now() * 0.0001) * 0.5 + 0.5) * this.width;
+      const y = (Math.cos(i * 67.89 + Date.now() * 0.0001) * 0.5 + 0.5) * this.height;
+      const size = Math.random() * 30 + 10;
+      
+      // Fluctuating intensity
+      const flickerIntensity = Math.sin(Date.now() * 0.003 + i) * 0.04 + 0.04;
+      
+      const foamGradient = this.ctx.createRadialGradient(x, y, 0, x, y, size);
+      foamGradient.addColorStop(0, `rgba(70, 40, 100, ${flickerIntensity})`);
+      foamGradient.addColorStop(0.6, `rgba(40, 20, 80, ${flickerIntensity/2})`);
+      foamGradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      
+      this.ctx.fillStyle = foamGradient;
+      this.ctx.beginPath();
+      this.ctx.arc(x, y, size, 0, Math.PI * 2);
+      this.ctx.fill();
+    }
+    
+    // Add subtle quantum wave patterns
+    this.ctx.strokeStyle = 'rgba(100, 50, 200, 0.03)';
+    this.ctx.lineWidth = 2;
+    
+    for (let i = 0; i < 5; i++) {
+      const yOffset = this.height * (i / 5) + Math.sin(Date.now() * 0.001 + i) * 20;
+      
+      this.ctx.beginPath();
+      for (let x = 0; x < this.width; x += 5) {
+        const waveHeight = Math.sin(x * 0.02 + Date.now() * 0.001 + i) * 10;
+        if (x === 0) {
+          this.ctx.moveTo(x, yOffset + waveHeight);
+        } else {
+          this.ctx.lineTo(x, yOffset + waveHeight);
+        }
+      }
+      this.ctx.stroke();
+    }
+  }
+  
+  private renderBigBangBackground() {
+    // Big Bang - explosive energy emanating from center
+    // Create explosive gradient from white hot center
+    const centerX = this.width / 2;
+    const centerY = this.height / 2;
+    const explosionRadius = this.width * (0.3 + Math.sin(Date.now() * 0.001) * 0.05);
+    
+    const explosionGradient = this.ctx.createRadialGradient(
+      centerX, centerY, 0,
+      centerX, centerY, explosionRadius
+    );
+    
+    // Hot white center to fiery oranges and reds, then cosmic background
+    explosionGradient.addColorStop(0, 'rgba(255, 255, 255, 0.9)');
+    explosionGradient.addColorStop(0.1, 'rgba(255, 220, 150, 0.8)');
+    explosionGradient.addColorStop(0.2, 'rgba(255, 150, 50, 0.7)');
+    explosionGradient.addColorStop(0.4, 'rgba(200, 60, 20, 0.5)');
+    explosionGradient.addColorStop(0.6, 'rgba(100, 30, 80, 0.3)');
+    explosionGradient.addColorStop(0.8, 'rgba(50, 15, 60, 0.2)');
+    explosionGradient.addColorStop(1, 'rgba(20, 10, 30, 0.1)');
+    
+    // Fill the entire canvas with the expanding explosion
+    this.ctx.fillStyle = explosionGradient;
+    this.ctx.fillRect(0, 0, this.width, this.height);
+    
+    // Add energy rays shooting outward
+    const rayCount = 30;
+    this.ctx.strokeStyle = 'rgba(255, 255, 200, 0.5)';
+    this.ctx.lineWidth = 2;
+    
+    for (let i = 0; i < rayCount; i++) {
+      const angle = (i / rayCount) * Math.PI * 2;
+      const length = explosionRadius * 1.2 * (0.7 + Math.random() * 0.5);
+      const endX = centerX + Math.cos(angle) * length;
+      const endY = centerY + Math.sin(angle) * length;
+      
+      this.ctx.beginPath();
+      this.ctx.moveTo(centerX, centerY);
+      this.ctx.lineTo(endX, endY);
+      this.ctx.stroke();
+    }
+    
+    // Add energy particles
+    for (let i = 0; i < 100; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const distance = Math.random() * explosionRadius;
+      const x = centerX + Math.cos(angle) * distance;
+      const y = centerY + Math.sin(angle) * distance;
+      const size = 1 + Math.random() * 3;
+      
+      // Color based on distance from center (hottest at center)
+      const distanceFactor = distance / explosionRadius;
+      let particleColor;
+      
+      if (distanceFactor < 0.2) {
+        particleColor = 'rgba(255, 255, 255, 0.8)';
+      } else if (distanceFactor < 0.5) {
+        particleColor = 'rgba(255, 220, 100, 0.7)';
+      } else {
+        particleColor = 'rgba(255, 150, 50, 0.6)';
+      }
+      
+      this.ctx.fillStyle = particleColor;
+      this.ctx.beginPath();
+      this.ctx.arc(x, y, size, 0, Math.PI * 2);
+      this.ctx.fill();
+    }
+  }
+  
+  private renderEarlyUniverseBackground() {
+    // Early universe - hot plasma and expanding space
+    // Gradient background representing cooling plasma
+    const gradient = this.ctx.createLinearGradient(0, 0, 0, this.height);
+    gradient.addColorStop(0, '#1A0B30'); // Deep purple-blue at top
+    gradient.addColorStop(0.3, '#120940'); // Purple in upper middle
+    gradient.addColorStop(0.7, '#0A0730'); // Deeper blue-purple in lower middle
+    gradient.addColorStop(1, '#050520'); // Dark at bottom
+    
+    this.ctx.fillStyle = gradient;
+    this.ctx.fillRect(0, 0, this.width, this.height);
+    
+    // Draw cosmic plasma - dynamic and fluid
+    const plasmaFields = 8;
+    for (let i = 0; i < plasmaFields; i++) {
+      const x = this.width * (i / plasmaFields) + (Math.sin(Date.now() * 0.0001 + i) * this.width * 0.1);
+      const y = this.height * 0.5 + (Math.cos(Date.now() * 0.0001 + i) * this.height * 0.3);
+      const size = Math.min(this.width, this.height) * (0.2 + i * 0.1);
+      
+      // Create plasma gradient
+      const plasmaGradient = this.ctx.createRadialGradient(x, y, 0, x, y, size);
+      
+      // Reddish-orange plasma colors (hotter)
+      plasmaGradient.addColorStop(0, `rgba(255, 150, 50, 0.05)`);
+      plasmaGradient.addColorStop(0.4, `rgba(200, 100, 40, 0.04)`);
+      plasmaGradient.addColorStop(0.7, `rgba(150, 50, 70, 0.03)`);
+      plasmaGradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      
+      this.ctx.fillStyle = plasmaGradient;
+      this.ctx.beginPath();
+      this.ctx.arc(x, y, size, 0, Math.PI * 2);
+      this.ctx.fill();
+    }
+    
+    // Beginning of particle formation - tiny bright dots
+    for (let i = 0; i < 200; i++) {
+      const x = Math.random() * this.width;
+      const y = Math.random() * this.height;
+      const size = 0.5 + Math.random() * 1;
+      
+      // Particle flicker effect
+      const flicker = 0.3 + Math.sin(Date.now() * 0.002 + i * 10) * 0.3;
+      this.ctx.fillStyle = `rgba(255, 220, 180, ${flicker})`;
+      
+      this.ctx.beginPath();
+      this.ctx.arc(x, y, size, 0, Math.PI * 2);
+      this.ctx.fill();
+    }
+  }
+  
+  private renderCosmicStructureBackground() {
+    // Cosmic structure forming - stars, galaxies beginning to form
+    const gradient = this.ctx.createLinearGradient(0, 0, 0, this.height);
+    gradient.addColorStop(0, '#0B0B2F'); // Deep blue at top
+    gradient.addColorStop(0.4, '#071038'); // Mid blue-purple
+    gradient.addColorStop(0.8, '#05071F'); // Dark blue-black
+    gradient.addColorStop(1, '#030311'); // Almost black at bottom
+    
+    this.ctx.fillStyle = gradient;
+    this.ctx.fillRect(0, 0, this.width, this.height);
+    
+    // Draw cosmic web structures - dark matter filaments
+    this.ctx.strokeStyle = 'rgba(80, 100, 180, 0.05)';
+    this.ctx.lineWidth = 8;
+    
+    // Create a web-like structure
+    const webPoints = 8;
+    const points = [];
+    
+    // Generate web junction points
+    for (let i = 0; i < webPoints; i++) {
+      points.push({
+        x: (Math.sin(i * 1.37) * 0.4 + 0.5) * this.width,
+        y: (Math.cos(i * 2.43) * 0.4 + 0.5) * this.height
+      });
+    }
+    
+    // Connect the web points
+    for (let i = 0; i < points.length; i++) {
+      for (let j = i + 1; j < points.length; j++) {
+        // Only connect some points, not all-to-all
+        if (Math.sin(i * j) > 0.3) {
+          this.ctx.beginPath();
+          this.ctx.moveTo(points[i].x, points[i].y);
+          this.ctx.lineTo(points[j].x, points[j].y);
+          this.ctx.stroke();
+        }
+      }
+    }
+    
+    // Draw subtle nebula effects
+    const nebulaCount = 5;
+    for (let i = 0; i < nebulaCount; i++) {
+      const x = this.width * (i / nebulaCount) + (Math.sin(Date.now() * 0.0001 + i) * this.width * 0.1);
+      const y = this.height * 0.5 + (Math.cos(Date.now() * 0.0001 + i) * this.height * 0.2);
+      const size = Math.min(this.width, this.height) * (0.2 + i * 0.15);
+      
+      // Create nebula gradient
+      const nebulaGradient = this.ctx.createRadialGradient(x, y, 0, x, y, size);
+      
+      // Random hue for each nebula
+      const hue = (i * 60 + Math.sin(Date.now() * 0.0005) * 20) % 360;
+      nebulaGradient.addColorStop(0, `hsla(${hue}, 80%, 30%, 0.04)`);
+      nebulaGradient.addColorStop(0.5, `hsla(${hue}, 70%, 20%, 0.03)`);
+      nebulaGradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      
+      this.ctx.fillStyle = nebulaGradient;
+      this.ctx.beginPath();
+      this.ctx.arc(x, y, size, 0, Math.PI * 2);
+      this.ctx.fill();
+    }
+    
+    // Draw stars - brighter ones for this phase
+    for (const star of this.starField) {
+      // Twinkling effect based on time
+      const twinkle = star.brightness + Math.sin(Date.now() * 0.002 + star.x * 0.01) * 0.2;
+      
+      this.ctx.fillStyle = `rgba(255, 255, 255, ${twinkle})`;
+      this.ctx.beginPath();
+      this.ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+      this.ctx.fill();
+      
+      // Add glow to brighter stars
+      if (star.size > 1.2) {
+        const glowSize = star.size * 3;
+        const glowGradient = this.ctx.createRadialGradient(
+          star.x, star.y, 0,
+          star.x, star.y, glowSize
+        );
+        
+        glowGradient.addColorStop(0, `rgba(200, 220, 255, ${twinkle * 0.3})`);
+        glowGradient.addColorStop(0.5, `rgba(150, 180, 255, ${twinkle * 0.15})`);
+        glowGradient.addColorStop(1, 'rgba(100, 150, 255, 0)');
+        
+        this.ctx.fillStyle = glowGradient;
+        this.ctx.beginPath();
+        this.ctx.arc(star.x, star.y, glowSize, 0, Math.PI * 2);
+        this.ctx.fill();
+      }
+    }
+  }
+  
+  private renderMatureUniverseBackground() {
+    // Mature universe - galaxies, planets, complex structures
+    const gradient = this.ctx.createLinearGradient(0, 0, 0, this.height);
+    gradient.addColorStop(0, '#0A0A20'); // Deep space blue at top
+    gradient.addColorStop(0.4, '#050525'); // Dark blue in middle
+    gradient.addColorStop(0.8, '#030318'); // Very dark blue lower
+    gradient.addColorStop(1, '#020210'); // Almost black at bottom
+    
+    this.ctx.fillStyle = gradient;
+    this.ctx.fillRect(0, 0, this.width, this.height);
+    
+    // Draw cosmic dust
+    for (const dust of this.cosmicDust) {
+      // Subtle movement
+      const x = dust.x + Math.sin(Date.now() * 0.0001 + dust.x) * 10;
+      const y = dust.y + Math.cos(Date.now() * 0.0001 + dust.y) * 10;
+      
+      const dustGradient = this.ctx.createRadialGradient(x, y, 0, x, y, dust.size);
+      dustGradient.addColorStop(0, dust.color);
+      dustGradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      
+      this.ctx.fillStyle = dustGradient;
+      this.ctx.beginPath();
+      this.ctx.arc(x, y, dust.size, 0, Math.PI * 2);
+      this.ctx.fill();
+    }
+    
+    // Draw galaxies
+    for (const galaxy of this.galaxies) {
+      this.ctx.save();
+      this.ctx.translate(galaxy.x, galaxy.y);
+      this.ctx.rotate(galaxy.rotation + Date.now() * 0.00005); // Slow rotation
+      
+      if (galaxy.type === 'spiral') {
+        this.drawSpiralGalaxy(galaxy.size);
+      } else if (galaxy.type === 'elliptical') {
+        this.drawEllipticalGalaxy(galaxy.size);
+      } else {
+        this.drawIrregularGalaxy(galaxy.size);
+      }
+      
+      this.ctx.restore();
+    }
+    
+    // Draw stars in the background
+    for (const star of this.starField) {
+      // Twinkling effect based on time
+      const twinkle = star.brightness + Math.sin(Date.now() * 0.002 + star.x * 0.01) * 0.2;
+      
+      this.ctx.fillStyle = `rgba(255, 255, 255, ${twinkle})`;
+      this.ctx.beginPath();
+      this.ctx.arc(star.x, star.y, star.size * 0.6, 0, Math.PI * 2);
+      this.ctx.fill();
+    }
+  }
+  
+  // Galaxy drawing methods
+  private drawSpiralGalaxy(size: number) {
+    // Draw the galactic core
+    const coreGradient = this.ctx.createRadialGradient(0, 0, 0, 0, 0, size * 0.3);
+    coreGradient.addColorStop(0, 'rgba(255, 250, 220, 0.3)');
+    coreGradient.addColorStop(0.5, 'rgba(255, 220, 180, 0.2)');
+    coreGradient.addColorStop(1, 'rgba(200, 150, 100, 0.05)');
+    
+    this.ctx.fillStyle = coreGradient;
+    this.ctx.beginPath();
+    this.ctx.arc(0, 0, size * 0.3, 0, Math.PI * 2);
+    this.ctx.fill();
+    
+    // Draw spiral arms
+    const armCount = 2;
+    const starCount = 100;
+    
+    for (let a = 0; a < armCount; a++) {
+      const startAngle = (a / armCount) * Math.PI * 2;
+      
+      for (let i = 0; i < starCount; i++) {
+        const distance = (i / starCount) * size;
+        const angle = startAngle + (i / starCount) * Math.PI * 2;
+        
+        const x = Math.cos(angle) * distance;
+        const y = Math.sin(angle) * distance;
+        const starSize = Math.random() * 1.5 + 0.5;
+        
+        this.ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+        this.ctx.beginPath();
+        this.ctx.arc(x, y, starSize, 0, Math.PI * 2);
+        this.ctx.fill();
+      }
+    }
+  }
+  
+  private drawEllipticalGalaxy(size: number) {
+    // Draw elliptical galaxy with radial gradient
+    const galaxyGradient = this.ctx.createRadialGradient(0, 0, 0, 0, 0, size);
+    galaxyGradient.addColorStop(0, 'rgba(255, 250, 220, 0.2)');
+    galaxyGradient.addColorStop(0.4, 'rgba(255, 200, 150, 0.1)');
+    galaxyGradient.addColorStop(0.8, 'rgba(200, 150, 100, 0.05)');
+    galaxyGradient.addColorStop(1, 'rgba(150, 100, 50, 0)');
+    
+    this.ctx.fillStyle = galaxyGradient;
+    
+    // Slightly squash the elliptical shape
+    this.ctx.save();
+    this.ctx.scale(1, 0.7);
+    this.ctx.beginPath();
+    this.ctx.arc(0, 0, size, 0, Math.PI * 2);
+    this.ctx.fill();
+    this.ctx.restore();
+    
+    // Add some random stars
+    const starCount = 50;
+    for (let i = 0; i < starCount; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const distance = Math.random() * size * 0.9;
+      
+      const x = Math.cos(angle) * distance;
+      const y = Math.sin(angle) * distance * 0.7; // Maintain elliptical shape
+      const starSize = Math.random() * 1 + 0.5;
+      
+      this.ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+      this.ctx.beginPath();
+      this.ctx.arc(x, y, starSize, 0, Math.PI * 2);
+      this.ctx.fill();
+    }
+  }
+  
+  private drawIrregularGalaxy(size: number) {
+    // Draw an irregular galaxy with cloud-like structures
+    const cloudCount = 5;
+    
+    for (let i = 0; i < cloudCount; i++) {
+      const x = (Math.sin(i * 1.2) * 0.5) * size * 0.7;
+      const y = (Math.cos(i * 1.8) * 0.5) * size * 0.7;
+      const cloudSize = (0.3 + Math.random() * 0.4) * size;
+      
+      const cloudGradient = this.ctx.createRadialGradient(x, y, 0, x, y, cloudSize);
+      cloudGradient.addColorStop(0, 'rgba(255, 230, 200, 0.15)');
+      cloudGradient.addColorStop(0.6, 'rgba(230, 200, 150, 0.07)');
+      cloudGradient.addColorStop(1, 'rgba(200, 150, 100, 0)');
+      
+      this.ctx.fillStyle = cloudGradient;
+      this.ctx.beginPath();
+      this.ctx.arc(x, y, cloudSize, 0, Math.PI * 2);
+      this.ctx.fill();
+      
+      // Add stars to each cloud
+      const starCount = 20;
+      for (let j = 0; j < starCount; j++) {
+        const starAngle = Math.random() * Math.PI * 2;
+        const starDistance = Math.random() * cloudSize * 0.8;
+        
+        const starX = x + Math.cos(starAngle) * starDistance;
+        const starY = y + Math.sin(starAngle) * starDistance;
+        const starSize = Math.random() * 1 + 0.5;
+        
+        this.ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+        this.ctx.beginPath();
+        this.ctx.arc(starX, starY, starSize, 0, Math.PI * 2);
+        this.ctx.fill();
+      }
+    }
+  }
+  
+  renderField(field: number[][]) {
+    const cellWidth = this.width / field.length;
+    const cellHeight = this.height / field[0].length;
+    
+    this.ctx.save();
+    
+    for (let i = 0; i < field.length; i++) {
+      for (let j = 0; j < field[0].length; j++) {
+        const value = field[i][j];
+        
+        // Skip rendering cells with very low energy
+        if (Math.abs(value) < 0.1) continue;
+        
+        const x = i * cellWidth;
+        const y = j * cellHeight;
+        
+        // Choose color based on field value
+        const intensity = Math.min(255, Math.abs(value * 100));
+        let color;
+        
+        if (value > 0) {
+          // Positive values: blueish
+          color = `rgba(20, ${intensity}, ${intensity * 2}, 0.1)`;
+        } else {
+          // Negative values: reddish
+          color = `rgba(${intensity * 2}, ${intensity / 2}, ${intensity / 3}, 0.1)`;
+        }
+        
+        this.ctx.fillStyle = color;
+        this.ctx.fillRect(x, y, cellWidth, cellHeight);
+      }
+    }
+    
+    this.ctx.restore();
+  }
+  
+  renderParticle(particle: Particle) {
+    this.ctx.save();
+    
+    const opacity = Math.min(1, 1 - (particle.age / particle.lifespan));
+    const size = 3 + particle.energy * 5;
+    const pulse = Math.sin(particle.age * 8) * 0.2 + 0.8; // Pulsing effect
+    
+    // Calculate wave pattern based on particle's phase and wavelength
+    const waveOffset = Math.sin(particle.age * 5 + particle.phase) * 20 * particle.energy;
+    
+    // Create glow effect
+    const glowSize = size * 2.5;
+    const glowGradient = this.ctx.createRadialGradient(
+      particle.x, particle.y, 0,
+      particle.x, particle.y, glowSize
+    );
+    
+    // Phase-specific particle colors
+    let innerColor, outerColor;
+    
+    switch(this.universePhase) {
+      case 0: // The Void
+        innerColor = `rgba(80, 40, 120, ${opacity * 0.6})`;
+        outerColor = `rgba(40, 15, 60, ${opacity * 0.1})`;
+        break;
+      case 1: // Quantum Foam
+        innerColor = `rgba(110, 60, 170, ${opacity * 0.7})`;
+        outerColor = `rgba(50, 20, 90, ${opacity * 0.2})`;
+        break;
+      case 2: // Big Bang
+        innerColor = `rgba(255, 220, 150, ${opacity * 0.9})`;
+        outerColor = `rgba(255, 150, 50, ${opacity * 0.3})`;
+        break;
+      case 3: // Early Universe 
+      case 4: // Nucleosynthesis
+        innerColor = `rgba(255, 150, 100, ${opacity * 0.8})`;
+        outerColor = `rgba(200, 70, 30, ${opacity * 0.2})`;
+        break;
+      default: // Later phases
+        innerColor = particle.entangled ? 
+          `rgba(255, 220, 50, ${opacity * 0.8})` : 
+          `rgba(100, 220, 255, ${opacity * 0.7})`;
+        outerColor = particle.entangled ? 
+          `rgba(255, 150, 0, 0)` : 
+          `rgba(0, 150, 255, 0)`;
+    }
+    
+    // Draw main particle with glow
+    if (particle.entangled) {
+      // Entangled particles have a golden glow regardless of phase
+      glowGradient.addColorStop(0, `rgba(255, 220, 50, ${opacity * 0.8})`);
+      glowGradient.addColorStop(0.5, `rgba(255, 180, 30, ${opacity * 0.3})`);
+      glowGradient.addColorStop(1, `rgba(255, 150, 0, 0)`);
+      
+      this.ctx.fillStyle = glowGradient;
+      this.ctx.beginPath();
+      this.ctx.arc(particle.x, particle.y, glowSize, 0, Math.PI * 2);
+      this.ctx.fill();
+      
+      // Entanglement rings
+      this.ctx.strokeStyle = `rgba(255, 255, 100, ${opacity * pulse})`;
+      this.ctx.lineWidth = 1.5;
+      this.ctx.beginPath();
+      this.ctx.arc(particle.x, particle.y, size * 1.8, 0, Math.PI * 2);
+      this.ctx.stroke();
+      
+      this.ctx.beginPath();
+      this.ctx.arc(particle.x, particle.y, size * 2.2, 0, Math.PI * 2);
+      this.ctx.stroke();
+      
+      // Core
+      this.ctx.fillStyle = `rgba(255, 230, 100, ${opacity})`;
+    } else {
+      // Normal particles have color based on phase
+      glowGradient.addColorStop(0, innerColor);
+      glowGradient.addColorStop(0.5, outerColor.replace(/rgba\(([^,]+),([^,]+),([^,]+),([^)]+)\)/, 
+                                (_, r, g, b, a) => `rgba(${r},${g},${b},${parseFloat(a) * 0.5})`));
+      glowGradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      
+      this.ctx.fillStyle = glowGradient;
+      this.ctx.beginPath();
+      this.ctx.arc(particle.x, particle.y, glowSize, 0, Math.PI * 2);
+      this.ctx.fill();
+      
+      // Core
+      this.ctx.fillStyle = innerColor;
+    }
+    
+    // Draw core
+    this.ctx.shadowColor = particle.entangled ? 'rgba(255, 200, 70, 0.8)' : 'rgba(30, 150, 255, 0.8)';
+    this.ctx.shadowBlur = 10;
+    this.ctx.beginPath();
+    this.ctx.arc(particle.x, particle.y, size * pulse, 0, Math.PI * 2);
+    this.ctx.fill();
+    this.ctx.shadowBlur = 0;
+    
+    // Draw wave trail with gradient
+    const trailPoints = 10;
+    const trailGradient = this.ctx.createLinearGradient(
+      particle.x, particle.y,
+      particle.x + Math.cos(particle.direction + Math.PI) * 20,
+      particle.y + Math.sin(particle.direction + Math.PI) * 20
+    );
+    
+    if (particle.entangled) {
+      trailGradient.addColorStop(0, `rgba(255, 200, 70, ${opacity * 0.8})`);
+      trailGradient.addColorStop(1, `rgba(255, 150, 0, 0)`);
+    } else {
+      trailGradient.addColorStop(0, `rgba(100, 200, 255, ${opacity * 0.8})`);
+      trailGradient.addColorStop(1, `rgba(50, 100, 255, 0)`);
+    }
+    
+    this.ctx.strokeStyle = trailGradient;
+    this.ctx.lineWidth = 2;
+    
+    // Main trail
+    this.ctx.beginPath();
+    this.ctx.moveTo(particle.x, particle.y);
+    
+    for (let i = 1; i <= trailPoints; i++) {
+      const t = i / trailPoints;
+      const dist = 20 * t;
+      const dx = Math.cos(particle.direction + Math.PI) * dist;
+      const dy = Math.sin(particle.direction + Math.PI) * dist;
+      
+      const trailWave = Math.sin(particle.age * 5 - t * 5 + particle.phase) * waveOffset * (1 - t);
+      const perpX = Math.cos(particle.direction + Math.PI/2) * trailWave;
+      const perpY = Math.sin(particle.direction + Math.PI/2) * trailWave;
+      
+      this.ctx.lineTo(
+        particle.x + dx + perpX, 
+        particle.y + dy + perpY
+      );
+    }
+    
+    this.ctx.stroke();
+    
+    this.ctx.restore();
+  }
+  
+  renderPlant(plant: Plant) {
+    this.ctx.save();
+    this.ctx.translate(plant.x, plant.y);
+    
+    // Apply rotation for all cosmic bodies
+    this.ctx.rotate(plant.rotation);
+    
+    // Extract color components for gradient
+    const hueMatch = plant.color.match(/hsl\((\d+),\s*(\d+)%,\s*(\d+)%\)/);
+    let hue = 120, sat = 70, light = 50;
+    
+    if (hueMatch) {
+      hue = parseInt(hueMatch[1]);
+      sat = parseInt(hueMatch[2]);
+      light = parseInt(hueMatch[3]);
+    }
+    
+    // Create outer glow
+    const outerGlow = this.ctx.createRadialGradient(0, 0, plant.size * 0.5, 0, 0, plant.size * 4);
+    outerGlow.addColorStop(0, `hsla(${hue}, ${sat}%, ${light + 10}%, 0.6)`);
+    outerGlow.addColorStop(0.5, `hsla(${hue}, ${sat}%, ${light}%, 0.2)`);
+    outerGlow.addColorStop(1, 'rgba(0,0,0,0)');
+    
+    this.ctx.fillStyle = outerGlow;
+    this.ctx.beginPath();
+    this.ctx.arc(0, 0, plant.size * 4, 0, Math.PI * 2);
+    this.ctx.fill();
+    
+    // Inner core with texture
+    const coreGradient = this.ctx.createRadialGradient(0, 0, 0, 0, 0, plant.size);
+    coreGradient.addColorStop(0, `hsla(${hue}, ${sat + 20}%, ${light + 15}%, 1)`);
+    coreGradient.addColorStop(0.7, `hsla(${hue}, ${sat + 10}%, ${light + 5}%, 1)`);
+    coreGradient.addColorStop(1, `hsla(${hue}, ${sat}%, ${light}%, 1)`);
+    
+    this.ctx.fillStyle = coreGradient;
+    this.ctx.shadowColor = `hsla(${hue}, ${sat}%, ${light + 20}%, 0.8)`;
+    this.ctx.shadowBlur = 15;
+    this.ctx.beginPath();
+    this.ctx.arc(0, 0, plant.size, 0, Math.PI * 2);
+    this.ctx.fill();
+    this.ctx.shadowBlur = 0;
+    
+    // Add energy pulse rings
+    const pulseSize = plant.size * (1 + Math.sin(plant.oscillation * 3) * 0.1);
+    this.ctx.strokeStyle = `hsla(${hue}, ${sat + 10}%, ${light + 25}%, ${0.3 + Math.sin(plant.oscillation * 2) * 0.1})`;
+    this.ctx.lineWidth = 1;
+    this.ctx.beginPath();
+    this.ctx.arc(0, 0, pulseSize * 1.3, 0, Math.PI * 2);
+    this.ctx.stroke();
+    
+    this.ctx.beginPath();
+    this.ctx.arc(0, 0, pulseSize * 1.7, 0, Math.PI * 2);
+    this.ctx.stroke();
+    
+    // Draw branches with enhanced styling
+    for (const branch of plant.branches) {
+      this.ctx.save();
+      this.ctx.translate(branch.x, branch.y);
+      
+      // Apply slight rotation based on oscillation
+      this.ctx.rotate(Math.sin(plant.oscillation) * 0.05);
+      
+      // Draw each segment with enhanced style
+      let prevX = 0;
+      let prevY = 0;
+      
+      for (let i = 0; i < branch.segments.length; i++) {
+        const segment = branch.segments[i];
+        const segmentWidth = branch.width * (1 - i / branch.segments.length) * (1 + Math.sin(plant.oscillation + i) * 0.1);
+        
+        // Calculate end points
+        const endX = segment.x + Math.cos(segment.angle) * segment.length;
+        const endY = segment.y + Math.sin(segment.angle) * segment.length;
+        
+        // Create segment gradient
+        const segmentGradient = this.ctx.createLinearGradient(
+          segment.x, segment.y,
+          endX, endY
+        );
+        
+        segmentGradient.addColorStop(0, `hsla(${hue}, ${sat}%, ${light + 10}%, 1)`);
+        segmentGradient.addColorStop(1, `hsla(${hue - 10}, ${sat - 10}%, ${light - 5}%, 1)`);
+        
+        // Draw segment
+        this.ctx.strokeStyle = segmentGradient;
+        this.ctx.lineWidth = segmentWidth;
+        this.ctx.lineCap = 'round';
+        
+        this.ctx.beginPath();
+        this.ctx.moveTo(segment.x, segment.y);
+        this.ctx.lineTo(endX, endY);
+        this.ctx.stroke();
+        
+        // Add a small node at end of segments
+        if (i < branch.segments.length - 1) {
+          const nodeGradient = this.ctx.createRadialGradient(
+            endX, endY, 0,
+            endX, endY, segmentWidth * 0.8
+          );
+          
+          nodeGradient.addColorStop(0, `hsla(${hue + 20}, ${sat}%, ${light + 15}%, 1)`);
+          nodeGradient.addColorStop(1, `hsla(${hue}, ${sat - 10}%, ${light - 5}%, 1)`);
+          
+          this.ctx.fillStyle = nodeGradient;
+          this.ctx.beginPath();
+          this.ctx.arc(endX, endY, segmentWidth * 0.8, 0, Math.PI * 2);
+          this.ctx.fill();
+        }
+      }
+      
+      this.ctx.restore();
+    }
+    
+    this.ctx.restore();
+  }
+}
